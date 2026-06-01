@@ -2,7 +2,12 @@ import TelegramBot from "node-telegram-bot-api";
 import { db, feedsTable, episodesTable, favoritesTable, queueTable } from "@workspace/db";
 import { eq, and, desc, like, count, sql } from "drizzle-orm";
 import { fetchFeed } from "./rss.js";
-import { fetchTrending, resolveRssFeed, COUNTRIES, PERIODS } from "./trending.js";
+import {
+  fetchTopCharts, searchPodcasts, resolveRssFeed,
+  ALL_COUNTRIES, getCountriesPage, totalCountryPages, findCountry,
+  COUNTRIES_PAGE_SIZE, type DiscoveredPodcast,
+} from "./discover.js";
+import { generateTranscriptPdf } from "./pdf.js";
 import {
   fmt, divider, shortDivider, truncate, episodeCard, feedCard,
   welcomeMsg, formatDate, parseDuration, formatDuration, progressBar,
@@ -11,8 +16,8 @@ import {
 const PAGE_SIZE = 5;
 
 type SessionState = {
-  action?: "awaiting_rss" | "awaiting_search";
-  trendingCountry?: string;
+  action?: "awaiting_rss" | "awaiting_search" | "awaiting_browse" | "awaiting_country_code";
+  browseCountry?: string;
 };
 
 const sessions = new Map<number, SessionState>();
@@ -32,7 +37,7 @@ export function registerHandlers(bot: TelegramBot) {
 
   // ─── /start & /help ───────────────────────────────────────────────────────
   bot.onText(/\/start/, async (msg) => { await send(msg.chat.id, welcomeMsg()); });
-  bot.onText(/\/help/, async (msg) => { await send(msg.chat.id, welcomeMsg()); });
+  bot.onText(/\/help/,  async (msg) => { await send(msg.chat.id, welcomeMsg()); });
 
   // ─── /add ─────────────────────────────────────────────────────────────────
   bot.onText(/\/add/, async (msg) => {
@@ -48,37 +53,43 @@ export function registerHandlers(bot: TelegramBot) {
   });
 
   // ─── /feeds ───────────────────────────────────────────────────────────────
-  bot.onText(/\/feeds/, async (msg) => { await showFeeds(bot, msg.chat.id); });
-
-  // ─── /latest ──────────────────────────────────────────────────────────────
-  bot.onText(/\/latest/, async (msg) => { await showLatest(bot, msg.chat.id); });
-
-  // ─── /queue ───────────────────────────────────────────────────────────────
-  bot.onText(/\/queue/, async (msg) => { await showQueue(bot, msg.chat.id); });
-
-  // ─── /favourites ──────────────────────────────────────────────────────────
+  bot.onText(/\/feeds/,      async (msg) => { await showFeeds(bot, msg.chat.id); });
+  bot.onText(/\/latest/,     async (msg) => { await showLatest(bot, msg.chat.id); });
+  bot.onText(/\/queue/,      async (msg) => { await showQueue(bot, msg.chat.id); });
   bot.onText(/\/favourites/, async (msg) => { await showFavourites(bot, msg.chat.id); });
-  bot.onText(/\/favorites/, async (msg) => { await showFavourites(bot, msg.chat.id); });
+  bot.onText(/\/favorites/,  async (msg) => { await showFavourites(bot, msg.chat.id); });
+  bot.onText(/\/stats/,      async (msg) => { await showStats(bot, msg.chat.id); });
+  bot.onText(/\/refresh/,    async (msg) => { await refreshAllFeeds(bot, msg.chat.id); });
 
   // ─── /search ──────────────────────────────────────────────────────────────
   bot.onText(/\/search/, async (msg) => {
     const chatId = msg.chat.id;
     getSession(chatId).action = "awaiting_search";
     await send(chatId, fmt([
-      "🔍 *Search Episodes*",
+      "🔍 *Search Your Episodes*",
       divider(),
       "Please enter your search query:",
     ]));
   });
 
-  // ─── /stats ───────────────────────────────────────────────────────────────
-  bot.onText(/\/stats/, async (msg) => { await showStats(bot, msg.chat.id); });
-
-  // ─── /refresh ─────────────────────────────────────────────────────────────
-  bot.onText(/\/refresh/, async (msg) => { await refreshAllFeeds(bot, msg.chat.id); });
+  // ─── /browse ──────────────────────────────────────────────────────────────
+  bot.onText(/\/browse/, async (msg) => {
+    const chatId = msg.chat.id;
+    getSession(chatId).action = "awaiting_browse";
+    await send(chatId, fmt([
+      "🌐 *Browse All Podcasts*",
+      divider(),
+      "Search the entire iTunes catalogue.",
+      "Enter any keyword, show name, or topic:",
+      "",
+      "_Examples: true crime · business · comedy_",
+    ]));
+  });
 
   // ─── /trending ────────────────────────────────────────────────────────────
-  bot.onText(/\/trending/, async (msg) => { await showTrendingCountries(bot, msg.chat.id); });
+  bot.onText(/\/trending/, async (msg) => {
+    await showCountryPicker(bot, msg.chat.id, 0, false);
+  });
 
   // ─── Text messages ────────────────────────────────────────────────────────
   bot.on("message", async (msg) => {
@@ -92,13 +103,24 @@ export function registerHandlers(bot: TelegramBot) {
       await handleAddRss(bot, chatId, text);
     } else if (session.action === "awaiting_search") {
       clearSession(chatId);
-      await handleSearch(bot, chatId, text);
+      await handleEpisodeSearch(bot, chatId, text);
+    } else if (session.action === "awaiting_browse") {
+      clearSession(chatId);
+      await handlePodcastSearch(bot, chatId, text, "us");
+    } else if (session.action === "awaiting_country_code") {
+      clearSession(chatId);
+      const code = text.toLowerCase().trim().replace(/[^a-z]/g, "");
+      if (code.length === 2) {
+        await showTopCharts(bot, chatId, 0, code, false);
+      } else {
+        await send(chatId, "❌ Please enter a valid 2-letter country code (e.g. `us`, `de`, `jp`).");
+      }
     } else if (text.startsWith("http")) {
       await handleAddRss(bot, chatId, text);
     } else {
       await send(chatId, fmt([
         "🤔 I beg your pardon, I didn't quite follow that.",
-        "Type /help to view available commands.",
+        "Type /help to view all available commands.",
       ]));
     }
   });
@@ -106,83 +128,341 @@ export function registerHandlers(bot: TelegramBot) {
   // ─── Callbacks ────────────────────────────────────────────────────────────
   bot.on("callback_query", async (query) => {
     if (!query.message || !query.data) return;
-    const chatId = query.message.chat.id;
-    const msgId = query.message.message_id;
-    const data = query.data;
+    const chatId  = query.message.chat.id;
+    const msgId   = query.message.message_id;
+    const data    = query.data;
 
     await bot.answerCallbackQuery(query.id);
 
-    if (data.startsWith("feed:")) {
-      const feedId = parseInt(data.split(":")[1]);
-      await showFeedEpisodes(bot, chatId, msgId, feedId, 0);
+    // Subscribed feed/episode navigation
+    if      (data.startsWith("feed:"))         { await showFeedEpisodes(bot, chatId, msgId, +data.split(":")[1], 0); }
+    else if (data.startsWith("eplist:"))        { const [,f,p] = data.split(":").map(Number); await showFeedEpisodes(bot, chatId, msgId, f, p); }
+    else if (data.startsWith("ep:"))            { await showEpisodeDetail(bot, chatId, msgId, +data.split(":")[1]); }
+    else if (data.startsWith("fav:"))           { await toggleFavourite(bot, chatId, msgId, +data.split(":")[1]); }
+    else if (data.startsWith("queue_add:"))     { await addToQueue(bot, chatId, msgId, +data.split(":")[1]); }
+    else if (data.startsWith("queue_rm:"))      { await removeFromQueue(bot, chatId, +data.split(":")[1]); await showQueue(bot, chatId); }
+    else if (data.startsWith("listened:"))      { await markListened(bot, chatId, msgId, +data.split(":")[1]); }
+    else if (data.startsWith("del_feed:"))      { await deleteFeed(bot, chatId, msgId, +data.split(":")[1]); }
+    else if (data.startsWith("refresh_feed:"))  { await refreshFeed(bot, chatId, msgId, +data.split(":")[1]); }
+    else if (data.startsWith("transcript:"))    { await doTranscript(bot, chatId, +data.split(":")[1]); }
+    else if (data === "back_feeds")             { await showFeedsInline(bot, chatId, msgId); }
 
-    } else if (data.startsWith("eplist:")) {
-      const [, feedId, page] = data.split(":").map(Number);
-      await showFeedEpisodes(bot, chatId, msgId, feedId, page);
-
-    } else if (data.startsWith("ep:")) {
-      const epId = parseInt(data.split(":")[1]);
-      await showEpisodeDetail(bot, chatId, msgId, epId);
-
-    } else if (data.startsWith("fav:")) {
-      const epId = parseInt(data.split(":")[1]);
-      await toggleFavourite(bot, chatId, msgId, epId);
-
-    } else if (data.startsWith("queue_add:")) {
-      const epId = parseInt(data.split(":")[1]);
-      await addToQueue(bot, chatId, msgId, epId);
-
-    } else if (data.startsWith("queue_rm:")) {
-      const epId = parseInt(data.split(":")[1]);
-      await removeFromQueue(bot, chatId, epId);
-      await showQueue(bot, chatId);
-
-    } else if (data.startsWith("listened:")) {
-      const epId = parseInt(data.split(":")[1]);
-      await markListened(bot, chatId, msgId, epId);
-
-    } else if (data.startsWith("del_feed:")) {
-      const feedId = parseInt(data.split(":")[1]);
-      await deleteFeed(bot, chatId, msgId, feedId);
-
-    } else if (data.startsWith("refresh_feed:")) {
-      const feedId = parseInt(data.split(":")[1]);
-      await refreshFeed(bot, chatId, msgId, feedId);
-
-    } else if (data.startsWith("download:")) {
-      const epId = parseInt(data.split(":")[1]);
-      await downloadEpisode(bot, chatId, msgId, epId);
-
-    } else if (data === "back_feeds") {
-      await showFeedsInline(bot, chatId, msgId);
-
-    } else if (data === "trending_countries") {
-      await showTrendingCountriesInline(bot, chatId, msgId);
-
-    } else if (data.startsWith("trend_c:")) {
-      const country = data.split(":")[1];
-      getSession(chatId).trendingCountry = country;
-      await showTrendingPeriods(bot, chatId, msgId, country);
-
-    } else if (data.startsWith("trend_p:")) {
-      const [, country, period] = data.split(":");
-      await showTrendingList(bot, chatId, msgId, country, period);
-
-    } else if (data.startsWith("trend_sub:")) {
-      const [, itunesId, encodedName] = data.split(":");
-      const name = decodeURIComponent(encodedName);
-      await subscribeToTrending(bot, chatId, msgId, itunesId, name);
+    // Browse & trending
+    else if (data.startsWith("country_page:")) {
+      const [, page, inline] = data.split(":");
+      await showCountryPicker(bot, chatId, +page, inline === "1", msgId);
+    }
+    else if (data === "country_type") {
+      getSession(chatId).action = "awaiting_country_code";
+      await bot.editMessageText(fmt([
+        "🔤 *Enter Country Code*",
+        divider(),
+        "Please type a 2-letter country code:",
+        "",
+        "_Examples: `us` · `gb` · `de` · `jp` · `br`_",
+      ]), { chat_id: chatId, message_id: msgId, parse_mode: "Markdown" });
+    }
+    else if (data.startsWith("trend_c:")) {
+      const [, country, page, inline] = data.split(":");
+      await showTopCharts(bot, chatId, +(page ?? 0), country, inline === "1", msgId);
+    }
+    else if (data.startsWith("charts_page:")) {
+      const [, country, page] = data.split(":");
+      await showTopCharts(bot, chatId, +page, country, true, msgId);
+    }
+    else if (data.startsWith("disc_sub:")) {
+      const parts = data.split(":");
+      const itunesId = parts[1];
+      const name = decodeURIComponent(parts.slice(2).join(":"));
+      await subscribeFromDiscovery(bot, chatId, msgId, itunesId, name);
     }
   });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// RSS / SUBSCRIPTION
+// COUNTRY PICKER  (paginated · all 60+ countries · type-in option)
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function showCountryPicker(
+  bot: TelegramBot, chatId: number, page: number,
+  inline: boolean, msgId?: number
+) {
+  const entries = getCountriesPage(page);
+  const totalPages = totalCountryPages();
+
+  const rows: TelegramBot.InlineKeyboardButton[][] = [];
+  for (let i = 0; i < entries.length; i += 2) {
+    const row: TelegramBot.InlineKeyboardButton[] = [
+      { text: entries[i][1], callback_data: `trend_c:${entries[i][0]}:0:${inline ? 1 : 0}` },
+    ];
+    if (entries[i + 1]) {
+      row.push({ text: entries[i + 1][1], callback_data: `trend_c:${entries[i + 1][0]}:0:${inline ? 1 : 0}` });
+    }
+    rows.push(row);
+  }
+
+  const nav: TelegramBot.InlineKeyboardButton[] = [];
+  if (page > 0)           nav.push({ text: "◀️ Prev", callback_data: `country_page:${page - 1}:${inline ? 1 : 0}` });
+  nav.push({ text: `${page + 1}/${totalPages}`, callback_data: "noop" });
+  if (page < totalPages - 1) nav.push({ text: "Next ▶️", callback_data: `country_page:${page + 1}:${inline ? 1 : 0}` });
+  rows.push(nav);
+  rows.push([{ text: "🔤 Enter Any Country Code", callback_data: "country_type" }]);
+
+  const text = fmt([
+    "🌍 *Trending Charts*",
+    divider(),
+    `Select a country · Page ${page + 1} of ${totalPages}`,
+  ]);
+
+  if (inline && msgId) {
+    await bot.editMessageText(text, {
+      chat_id: chatId, message_id: msgId,
+      parse_mode: "Markdown",
+      reply_markup: { inline_keyboard: rows },
+    });
+  } else {
+    await bot.sendMessage(chatId, text, {
+      parse_mode: "Markdown",
+      reply_markup: { inline_keyboard: rows },
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TOP CHARTS  (paginated · 5 per page)
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function showTopCharts(
+  bot: TelegramBot, chatId: number, page: number,
+  country: string, inline: boolean, msgId?: number
+) {
+  const countryName = findCountry(country) ?? country.toUpperCase();
+  const CHART_PAGE = 10;
+
+  const edit = async (text: string, keyboard?: TelegramBot.InlineKeyboardMarkup) => {
+    if (inline && msgId) {
+      await bot.editMessageText(text, {
+        chat_id: chatId, message_id: msgId, parse_mode: "Markdown",
+        reply_markup: keyboard, disable_web_page_preview: true,
+      });
+    } else {
+      const m = await bot.sendMessage(chatId, text, {
+        parse_mode: "Markdown", reply_markup: keyboard,
+        disable_web_page_preview: true,
+      });
+      // make subsequent calls treat it as inline
+      inline = true;
+      msgId  = m.message_id;
+    }
+  };
+
+  await edit(fmt([
+    `⏳ *Loading Charts…*`,
+    divider(),
+    `🌍 ${countryName}`,
+  ]));
+
+  try {
+    const all = await fetchTopCharts(country, 100);
+    const totalPages = Math.ceil(all.length / CHART_PAGE);
+    const slice = all.slice(page * CHART_PAGE, (page + 1) * CHART_PAGE);
+    const startIdx = page * CHART_PAGE + 1;
+
+    const lines = [
+      `🏆 *Top Podcasts · ${countryName}*`,
+      divider(),
+      `Page ${page + 1} of ${totalPages}`,
+      shortDivider(),
+      ...slice.map((p, i) =>
+        `${startIdx + i}. *${truncate(p.name, 36)}*\n    _${truncate(p.artist, 32)}_`
+      ),
+      divider(),
+      "_Tap a podcast to subscribe._",
+    ];
+
+    const keyboard: TelegramBot.InlineKeyboardButton[][] = slice.map((p, i) => [{
+      text: `${startIdx + i}. ${truncate(p.name, 34)}`,
+      callback_data: `disc_sub:${p.id}:${encodeURIComponent(p.name.slice(0, 36))}`,
+    }]);
+
+    const navRow: TelegramBot.InlineKeyboardButton[] = [];
+    if (page > 0)              navRow.push({ text: "◀️ Prev", callback_data: `charts_page:${country}:${page - 1}` });
+    if (page < totalPages - 1) navRow.push({ text: "Next ▶️", callback_data: `charts_page:${country}:${page + 1}` });
+    if (navRow.length) keyboard.push(navRow);
+
+    keyboard.push([{ text: "🌍 Change Country", callback_data: "country_page:0:1" }]);
+
+    await edit(lines.join("\n"), { inline_keyboard: keyboard });
+  } catch (err: any) {
+    await edit(fmt([
+      "❌ *Charts Unavailable*",
+      divider(),
+      `Could not retrieve charts for ${countryName}.`,
+      "",
+      `_${truncate(String(err?.message ?? err), 80)}_`,
+      "",
+      "Try a different country or use /browse to search.",
+    ]), {
+      inline_keyboard: [
+        [{ text: "🌍 Try Another Country", callback_data: "country_page:0:1" }],
+        [{ text: "🔍 Browse Instead", callback_data: "noop" }],
+      ],
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PODCAST SEARCH  (/browse · iTunes catalogue)
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function handlePodcastSearch(
+  bot: TelegramBot, chatId: number, query: string, country: string
+) {
+  const send = (t: string, o?: TelegramBot.SendMessageOptions) =>
+    bot.sendMessage(chatId, t, { parse_mode: "Markdown", ...o });
+
+  const loadMsg = await send(fmt([
+    `🔍 *Searching iTunes…*`,
+    divider(),
+    `"${truncate(query, 40)}"`,
+  ]));
+
+  try {
+    const results = await searchPodcasts(query, country, 20);
+
+    if (!results.length) {
+      await bot.editMessageText(fmt([
+        `🔍 *No Results for "${truncate(query, 30)}"*`,
+        divider(),
+        "Try a different keyword.",
+      ]), { chat_id: chatId, message_id: loadMsg.message_id, parse_mode: "Markdown" });
+      return;
+    }
+
+    const lines = [
+      `🌐 *"${truncate(query, 28)}" · ${results.length} podcasts*`,
+      divider(),
+      ...results.map((p, i) =>
+        `${i + 1}. *${truncate(p.name, 36)}*\n    _${truncate(p.artist, 30)}_`
+      ),
+      divider(),
+      "_Tap to subscribe._",
+    ];
+
+    const keyboard: TelegramBot.InlineKeyboardButton[][] = results.map((p, i) => [{
+      text: `${i + 1}. ${truncate(p.name, 34)}`,
+      callback_data: `disc_sub:${p.id}:${encodeURIComponent(p.name.slice(0, 36))}`,
+    }]);
+
+    await bot.editMessageText(lines.join("\n"), {
+      chat_id: chatId,
+      message_id: loadMsg.message_id,
+      parse_mode: "Markdown",
+      reply_markup: { inline_keyboard: keyboard },
+    });
+  } catch (err: any) {
+    await bot.editMessageText(fmt([
+      "❌ *Search Failed*",
+      divider(),
+      `_${truncate(String(err?.message ?? err), 80)}_`,
+    ]), { chat_id: chatId, message_id: loadMsg.message_id, parse_mode: "Markdown" });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SUBSCRIBE FROM DISCOVERY
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function subscribeFromDiscovery(
+  bot: TelegramBot, chatId: number, msgId: number, itunesId: string, name: string
+) {
+  await bot.editMessageText(fmt([
+    "⏳ *Resolving Feed…*",
+    divider(),
+    `📻 ${name}`,
+  ]), { chat_id: chatId, message_id: msgId, parse_mode: "Markdown" });
+
+  try {
+    const rssUrl = await resolveRssFeed(itunesId);
+    if (!rssUrl) {
+      await bot.editMessageText(fmt([
+        "❌ *RSS Feed Not Found*",
+        divider(),
+        `📻 ${name}`,
+        "",
+        "Apple Podcasts did not return an RSS URL.",
+        "Try adding it manually via /add.",
+      ]), { chat_id: chatId, message_id: msgId, parse_mode: "Markdown" });
+      return;
+    }
+
+    // Already subscribed?
+    const existing = await db.select().from(feedsTable)
+      .where(and(eq(feedsTable.chatId, String(chatId)), eq(feedsTable.url, rssUrl)))
+      .limit(1);
+
+    if (existing.length > 0) {
+      await bot.editMessageText(fmt([
+        "⚠️ *Already Subscribed*",
+        divider(),
+        `📻 ${name}`,
+        "",
+        "You are already subscribed to this podcast.",
+        "Use /feeds to browse it.",
+      ]), { chat_id: chatId, message_id: msgId, parse_mode: "Markdown" });
+      return;
+    }
+
+    // Fetch all episodes (no arbitrary cap)
+    const feedData = await fetchFeed(rssUrl);
+    const [feed] = await db.insert(feedsTable).values({
+      chatId: String(chatId),
+      url: rssUrl,
+      title: feedData.title || name,
+      lastChecked: new Date(),
+    }).returning();
+
+    if (feedData.episodes.length > 0) {
+      // Insert in chunks to avoid query size limits
+      const CHUNK = 100;
+      for (let i = 0; i < feedData.episodes.length; i += CHUNK) {
+        await db.insert(episodesTable).values(
+          feedData.episodes.slice(i, i + CHUNK).map((ep) => ({
+            feedId: feed.id, guid: ep.guid, title: ep.title,
+            description: ep.description, audioUrl: ep.audioUrl,
+            pubDate: ep.pubDate, duration: ep.duration,
+          }))
+        ).onConflictDoNothing();
+      }
+    }
+
+    await bot.editMessageText(fmt([
+      "✅ *Subscription Added*",
+      divider(),
+      `📻 *${truncate(feedData.title || name, 45)}*`,
+      `🎙 ${feedData.episodes.length} episode${feedData.episodes.length === 1 ? "" : "s"} loaded`,
+      "",
+      "Use /feeds to browse · /latest for newest episodes",
+    ]), { chat_id: chatId, message_id: msgId, parse_mode: "Markdown" });
+
+  } catch (err: any) {
+    await bot.editMessageText(fmt([
+      "❌ *Subscription Failed*",
+      divider(),
+      `_${truncate(String(err?.message ?? err), 80)}_`,
+      "",
+      "Try adding manually via /add.",
+    ]), { chat_id: chatId, message_id: msgId, parse_mode: "Markdown" });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ADD VIA RSS
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function handleAddRss(bot: TelegramBot, chatId: number, url: string) {
-  const send = (text: string, opts?: TelegramBot.SendMessageOptions) =>
-    bot.sendMessage(chatId, text, { parse_mode: "Markdown", ...opts });
+  const send = (t: string, o?: TelegramBot.SendMessageOptions) =>
+    bot.sendMessage(chatId, t, { parse_mode: "Markdown", ...o });
 
   if (!url.startsWith("http")) {
     await send("❌ That URL does not appear to be valid. It must begin with http or https.");
@@ -190,7 +470,7 @@ async function handleAddRss(bot: TelegramBot, chatId: number, url: string) {
   }
 
   const loadMsg = await send(fmt([
-    "⏳ *Fetching podcast feed…*",
+    "⏳ *Fetching Podcast Feed…*",
     divider(),
     `📡 ${truncate(url, 40)}`,
   ]));
@@ -214,23 +494,16 @@ async function handleAddRss(bot: TelegramBot, chatId: number, url: string) {
     }
 
     const [feed] = await db.insert(feedsTable).values({
-      chatId: String(chatId),
-      url,
-      title: feedData.title,
-      lastChecked: new Date(),
+      chatId: String(chatId), url, title: feedData.title, lastChecked: new Date(),
     }).returning();
 
-    const episodes = feedData.episodes.slice(0, 50);
-    if (episodes.length > 0) {
+    const CHUNK = 100;
+    for (let i = 0; i < feedData.episodes.length; i += CHUNK) {
       await db.insert(episodesTable).values(
-        episodes.map((ep) => ({
-          feedId: feed.id,
-          guid: ep.guid,
-          title: ep.title,
-          description: ep.description,
-          audioUrl: ep.audioUrl,
-          pubDate: ep.pubDate,
-          duration: ep.duration,
+        feedData.episodes.slice(i, i + CHUNK).map((ep) => ({
+          feedId: feed.id, guid: ep.guid, title: ep.title,
+          description: ep.description, audioUrl: ep.audioUrl,
+          pubDate: ep.pubDate, duration: ep.duration,
         }))
       ).onConflictDoNothing();
     }
@@ -239,10 +512,9 @@ async function handleAddRss(bot: TelegramBot, chatId: number, url: string) {
       "✅ *Subscription Added*",
       divider(),
       `📻 *${truncate(feedData.title, 45)}*`,
-      `🎙 ${episodes.length} episode${episodes.length === 1 ? "" : "s"} loaded`,
+      `🎙 ${feedData.episodes.length} episode${feedData.episodes.length === 1 ? "" : "s"} loaded`,
       "",
-      "Use /feeds to browse your subscriptions.",
-      "Use /latest to see the newest episodes.",
+      "Use /feeds to browse · /latest for newest episodes",
     ]), { chat_id: chatId, message_id: loadMsg.message_id, parse_mode: "Markdown" });
 
   } catch (err: any) {
@@ -251,7 +523,7 @@ async function handleAddRss(bot: TelegramBot, chatId: number, url: string) {
       divider(),
       "Please verify the URL is a valid RSS or Atom feed.",
       "",
-      `_Error: ${truncate(String(err?.message || err), 80)}_`,
+      `_Error: ${truncate(String(err?.message ?? err), 80)}_`,
     ]), { chat_id: chatId, message_id: loadMsg.message_id, parse_mode: "Markdown" });
   }
 }
@@ -270,9 +542,8 @@ async function showFeeds(bot: TelegramBot, chatId: number) {
       "📭 *No Subscriptions Yet*",
       divider(),
       "/add — Subscribe via RSS URL",
-      "/trending — Discover trending podcasts",
-      "",
-      "_You may also send an RSS URL directly._ 🚀",
+      "/browse — Search the iTunes catalogue",
+      "/trending — Discover by country charts",
     ]), { parse_mode: "Markdown" });
     return;
   }
@@ -286,7 +557,7 @@ async function showFeeds(bot: TelegramBot, chatId: number) {
   );
 
   const keyboard = feeds.map((f, i) => [{
-    text: `${i + 1}. ${truncate(f.title, 28)}`,
+    text: `${i + 1}. ${truncate(f.title, 30)}`,
     callback_data: `feed:${f.id}`,
   }]);
 
@@ -296,10 +567,7 @@ async function showFeeds(bot: TelegramBot, chatId: number) {
     ...lines,
     divider(),
     "_Tap a podcast to browse its episodes._",
-  ]), {
-    parse_mode: "Markdown",
-    reply_markup: { inline_keyboard: keyboard },
-  });
+  ]), { parse_mode: "Markdown", reply_markup: { inline_keyboard: keyboard } });
 }
 
 async function showFeedsInline(bot: TelegramBot, chatId: number, msgId: number) {
@@ -316,20 +584,18 @@ async function showFeedsInline(bot: TelegramBot, chatId: number, msgId: number) 
   }
 
   const keyboard = feeds.map((f, i) => [{
-    text: `${i + 1}. ${truncate(f.title, 28)}`,
+    text: `${i + 1}. ${truncate(f.title, 30)}`,
     callback_data: `feed:${f.id}`,
   }]);
 
   await bot.editMessageText(fmt([
     `📻 *Your Subscriptions · ${feeds.length}*`,
     divider(),
-    ...feeds.map((f, i) => `${i + 1}. ${truncate(f.title, 40)}`),
+    ...feeds.map((f, i) => `${i + 1}. ${truncate(f.title, 42)}`),
     divider(),
     "_Tap a podcast to browse its episodes._",
   ]), {
-    chat_id: chatId,
-    message_id: msgId,
-    parse_mode: "Markdown",
+    chat_id: chatId, message_id: msgId, parse_mode: "Markdown",
     reply_markup: { inline_keyboard: keyboard },
   });
 }
@@ -340,8 +606,8 @@ async function showFeedEpisodes(
   const feed = await db.select().from(feedsTable).where(eq(feedsTable.id, feedId)).limit(1);
   if (!feed[0]) return;
 
-  const total = await db.select({ c: count() }).from(episodesTable).where(eq(episodesTable.feedId, feedId));
-  const totalCount = total[0].c;
+  const [{ c: totalCount }] = await db.select({ c: count() }).from(episodesTable)
+    .where(eq(episodesTable.feedId, feedId));
 
   const episodes = await db.select().from(episodesTable)
     .where(eq(episodesTable.feedId, feedId))
@@ -350,7 +616,7 @@ async function showFeedEpisodes(
     .offset(page * PAGE_SIZE);
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
-  const startIdx = page * PAGE_SIZE + 1;
+  const startIdx   = page * PAGE_SIZE + 1;
 
   const keyboard: TelegramBot.InlineKeyboardButton[][] = episodes.map((ep, i) => [{
     text: `${startIdx + i}. ${ep.listened ? "✅" : "🔵"} ${truncate(ep.title, 30)}`,
@@ -358,14 +624,15 @@ async function showFeedEpisodes(
   }]);
 
   const navRow: TelegramBot.InlineKeyboardButton[] = [];
-  if (page > 0) navRow.push({ text: "◀️ Previous", callback_data: `eplist:${feedId}:${page - 1}` });
+  if (page > 0)              navRow.push({ text: "◀️ Prev", callback_data: `eplist:${feedId}:${page - 1}` });
+  navRow.push({ text: `${page + 1} / ${totalPages}`, callback_data: "noop" });
   if (page < totalPages - 1) navRow.push({ text: "Next ▶️", callback_data: `eplist:${feedId}:${page + 1}` });
-  if (navRow.length) keyboard.push(navRow);
+  keyboard.push(navRow);
 
   keyboard.push([
-    { text: "🔄 Refresh", callback_data: `refresh_feed:${feedId}` },
-    { text: "🗑 Remove", callback_data: `del_feed:${feedId}` },
-    { text: "◀️ Back", callback_data: "back_feeds" },
+    { text: "🔄 Refresh",  callback_data: `refresh_feed:${feedId}` },
+    { text: "🗑 Remove",   callback_data: `del_feed:${feedId}` },
+    { text: "◀️ Back",     callback_data: "back_feeds" },
   ]);
 
   await bot.editMessageText(fmt([
@@ -379,375 +646,181 @@ async function showFeedEpisodes(
     divider(),
     "_Tap an episode for details._",
   ]), {
-    chat_id: chatId,
-    message_id: msgId,
-    parse_mode: "Markdown",
+    chat_id: chatId, message_id: msgId, parse_mode: "Markdown",
     reply_markup: { inline_keyboard: keyboard },
   });
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EPISODE DETAIL  (with Play + Download URL buttons)
+// ═══════════════════════════════════════════════════════════════════════════
 
 async function showEpisodeDetail(bot: TelegramBot, chatId: number, msgId: number, epId: number) {
   const ep = await db.select().from(episodesTable).where(eq(episodesTable.id, epId)).limit(1);
   if (!ep[0]) return;
 
-  const feed = await db.select().from(feedsTable).where(eq(feedsTable.id, ep[0].feedId)).limit(1);
-  const isFav = await db.select().from(favoritesTable)
-    .where(and(eq(favoritesTable.chatId, String(chatId)), eq(favoritesTable.episodeId, epId)))
-    .limit(1);
-  const inQueue = await db.select().from(queueTable)
-    .where(and(eq(queueTable.chatId, String(chatId)), eq(queueTable.episodeId, epId)))
-    .limit(1);
+  const [feed, favRows, queueRows] = await Promise.all([
+    db.select().from(feedsTable).where(eq(feedsTable.id, ep[0].feedId)).limit(1),
+    db.select().from(favoritesTable)
+      .where(and(eq(favoritesTable.chatId, String(chatId)), eq(favoritesTable.episodeId, epId)))
+      .limit(1),
+    db.select().from(queueTable)
+      .where(and(eq(queueTable.chatId, String(chatId)), eq(queueTable.episodeId, epId)))
+      .limit(1),
+  ]);
+
+  const isFav   = favRows.length > 0;
+  const inQueue = queueRows.length > 0;
+  const audioUrl = ep[0].audioUrl ?? "";
 
   const card = episodeCard({
-    title: ep[0].title,
-    feedTitle: feed[0]?.title,
-    pubDate: ep[0].pubDate,
-    duration: ep[0].duration,
-    listened: ep[0].listened ?? false,
-    progress: ep[0].progress ?? 0,
-    isFav: isFav.length > 0,
-    inQueue: inQueue.length > 0,
+    title: ep[0].title, feedTitle: feed[0]?.title,
+    pubDate: ep[0].pubDate, duration: ep[0].duration,
+    listened: ep[0].listened ?? false, progress: ep[0].progress ?? 0,
+    isFav, inQueue,
   });
 
   const desc = ep[0].description
     ? "\n" + divider() + "\n" + truncate(ep[0].description.replace(/<[^>]+>/g, ""), 200)
     : "";
 
-  const keyboard: TelegramBot.InlineKeyboardButton[][] = [
-    [
-      { text: isFav.length > 0 ? "💔 Unfavourite" : "❤️ Favourite", callback_data: `fav:${epId}` },
-      { text: inQueue.length > 0 ? "✅ In Queue" : "⏭ Add to Queue", callback_data: `queue_add:${epId}` },
-    ],
-    [
-      { text: ep[0].listened ? "🔄 Mark Unplayed" : "✅ Mark Played", callback_data: `listened:${epId}` },
-      { text: "📥 Download", callback_data: `download:${epId}` },
-    ],
-    [
-      { text: "◀️ Back", callback_data: `feed:${ep[0].feedId}` },
-    ],
-  ];
+  const keyboard: TelegramBot.InlineKeyboardButton[][] = [];
+
+  // Row 1: Favourite + Queue
+  keyboard.push([
+    { text: isFav ? "💔 Unfavourite" : "❤️ Favourite", callback_data: `fav:${epId}` },
+    { text: inQueue ? "✅ In Queue"   : "⏭ Add to Queue", callback_data: `queue_add:${epId}` },
+  ]);
+
+  // Row 2: Mark played + Transcript
+  keyboard.push([
+    { text: ep[0].listened ? "🔄 Mark Unplayed" : "✅ Mark Played", callback_data: `listened:${epId}` },
+    { text: "📄 Transcript PDF", callback_data: `transcript:${epId}` },
+  ]);
+
+  // Row 3: Play + Download (URL buttons — work for any file size)
+  if (audioUrl) {
+    keyboard.push([
+      { text: "🎧 Play Online",  url: audioUrl },
+      { text: "📥 Download",     url: audioUrl },
+    ]);
+  }
+
+  // Row 4: Back
+  keyboard.push([{ text: "◀️ Back", callback_data: `feed:${ep[0].feedId}` }]);
 
   await bot.editMessageText(card + desc, {
-    chat_id: chatId,
-    message_id: msgId,
-    parse_mode: "Markdown",
+    chat_id: chatId, message_id: msgId, parse_mode: "Markdown",
     reply_markup: { inline_keyboard: keyboard },
   });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// DOWNLOAD
+// TRANSCRIPT PDF
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function downloadEpisode(bot: TelegramBot, chatId: number, msgId: number, epId: number) {
+async function doTranscript(bot: TelegramBot, chatId: number, epId: number) {
   const ep = await db.select().from(episodesTable).where(eq(episodesTable.id, epId)).limit(1);
   if (!ep[0]) return;
 
-  if (!ep[0].audioUrl) {
+  const feed = await db.select().from(feedsTable)
+    .where(eq(feedsTable.id, ep[0].feedId)).limit(1);
+
+  if (!process.env.OPENAI_API_KEY) {
     await bot.sendMessage(chatId, fmt([
-      "❌ *No Audio File Available*",
+      "🔑 *OpenAI API Key Required*",
       divider(),
-      "This episode does not have a downloadable audio link.",
+      "Transcription uses OpenAI Whisper.",
+      "Please add your key as `OPENAI_API_KEY` in Secrets,",
+      "then try again.",
     ]), { parse_mode: "Markdown" });
     return;
   }
 
-  const url = ep[0].audioUrl;
-  const title = truncate(ep[0].title, 60);
+  if (!ep[0].audioUrl) {
+    await bot.sendMessage(chatId, "❌ This episode has no audio URL — cannot transcribe.", { parse_mode: "Markdown" });
+    return;
+  }
 
   const statusMsg = await bot.sendMessage(chatId, fmt([
-    "📥 *Preparing Download…*",
+    "📄 *Generating Transcript…*",
     divider(),
-    `🎙 ${title}`,
+    `🎙 ${truncate(ep[0].title, 50)}`,
     "",
-    "⏳ Checking file size…",
+    "⏳ Downloading audio (up to 25 MB)…",
   ]), { parse_mode: "Markdown" });
 
   try {
-    const head = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(8000) });
-    const contentLength = parseInt(head.headers.get("content-length") || "0", 10);
-    const contentType = head.headers.get("content-type") || "";
-    const isAudio = contentType.includes("audio") || url.match(/\.(mp3|m4a|ogg|aac|opus|wav)(\?.*)?$/i);
-    const MB50 = 50 * 1024 * 1024;
-
-    if (contentLength > 0 && contentLength <= MB50 && isAudio) {
-      // Telegram can handle up to 50 MB directly
-      await bot.editMessageText(fmt([
-        "📥 *Sending Audio…*",
-        divider(),
-        `🎙 ${title}`,
-        `📦 Size · ${(contentLength / 1048576).toFixed(1)} MB`,
-        "",
-        "⏳ Please wait whilst it uploads…",
-      ]), { chat_id: chatId, message_id: statusMsg.message_id, parse_mode: "Markdown" });
-
-      const feed = await db.select().from(feedsTable).where(eq(feedsTable.id, ep[0].feedId)).limit(1);
-
-      await bot.sendAudio(chatId, url, {
-        title: ep[0].title,
-        performer: feed[0]?.title ?? "Podcast",
-        caption: truncate(ep[0].title, 200),
-        parse_mode: "Markdown",
-      });
-
-      await bot.deleteMessage(chatId, statusMsg.message_id);
-
-    } else {
-      // File too large or unknown — provide direct link
-      const sizeStr = contentLength > 0 ? `${(contentLength / 1048576).toFixed(1)} MB` : "Unknown size";
-
-      await bot.editMessageText(fmt([
-        "📎 *Direct Download Link*",
-        divider(),
-        `🎙 ${title}`,
-        `📦 ${sizeStr}`,
-        "",
-        "Telegram's 50 MB limit prevents sending this file directly.",
-        "Tap the link below to download it to your device:",
-        "",
-        url,
-      ]), {
-        chat_id: chatId,
-        message_id: statusMsg.message_id,
-        parse_mode: "Markdown",
-        disable_web_page_preview: true,
-      });
-    }
-
-  } catch (err: any) {
-    // Fallback: just provide the link
-    await bot.editMessageText(fmt([
-      "📎 *Download Link*",
-      divider(),
-      `🎙 ${title}`,
-      "",
-      "_Tap below to open or save the audio file:_",
-      "",
-      url,
-    ]), {
-      chat_id: chatId,
-      message_id: statusMsg.message_id,
-      parse_mode: "Markdown",
-      disable_web_page_preview: true,
+    // Download up to 25 MB (Whisper limit)
+    const audioRes = await fetch(ep[0].audioUrl, {
+      headers: { "User-Agent": "Mozilla/5.0", "Range": "bytes=0-26214400" },
     });
-  }
-}
 
-// ═══════════════════════════════════════════════════════════════════════════
-// TRENDING
-// ═══════════════════════════════════════════════════════════════════════════
+    if (!audioRes.ok) throw new Error(`Audio download failed: ${audioRes.status}`);
+    const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
 
-async function showTrendingCountries(bot: TelegramBot, chatId: number) {
-  const keyboard = buildCountryKeyboard();
-  await bot.sendMessage(chatId, fmt([
-    "🌍 *Trending Podcasts*",
-    divider(),
-    "Select a country to discover what",
-    "is trending right now:",
-  ]), {
-    parse_mode: "Markdown",
-    reply_markup: { inline_keyboard: keyboard },
-  });
-}
-
-async function showTrendingCountriesInline(bot: TelegramBot, chatId: number, msgId: number) {
-  const keyboard = buildCountryKeyboard();
-  await bot.editMessageText(fmt([
-    "🌍 *Trending Podcasts*",
-    divider(),
-    "Select a country to discover what",
-    "is trending right now:",
-  ]), {
-    chat_id: chatId,
-    message_id: msgId,
-    parse_mode: "Markdown",
-    reply_markup: { inline_keyboard: keyboard },
-  });
-}
-
-function buildCountryKeyboard(): TelegramBot.InlineKeyboardButton[][] {
-  const entries = Object.entries(COUNTRIES);
-  const keyboard: TelegramBot.InlineKeyboardButton[][] = [];
-  for (let i = 0; i < entries.length; i += 2) {
-    const row: TelegramBot.InlineKeyboardButton[] = [
-      { text: entries[i][1], callback_data: `trend_c:${entries[i][0]}` },
-    ];
-    if (entries[i + 1]) {
-      row.push({ text: entries[i + 1][1], callback_data: `trend_c:${entries[i + 1][0]}` });
-    }
-    keyboard.push(row);
-  }
-  return keyboard;
-}
-
-async function showTrendingPeriods(bot: TelegramBot, chatId: number, msgId: number, country: string) {
-  const countryName = COUNTRIES[country] ?? country.toUpperCase();
-  const keyboard: TelegramBot.InlineKeyboardButton[][] = [
-    [
-      { text: "📅 Today", callback_data: `trend_p:${country}:daily` },
-      { text: "📆 This Week", callback_data: `trend_p:${country}:weekly` },
-    ],
-    [
-      { text: "🗓 This Month", callback_data: `trend_p:${country}:monthly` },
-      { text: "📊 This Year", callback_data: `trend_p:${country}:yearly` },
-    ],
-    [
-      { text: "◀️ Change Country", callback_data: "trending_countries" },
-    ],
-  ];
-
-  await bot.editMessageText(fmt([
-    `🌍 *Trending in ${countryName}*`,
-    divider(),
-    "Select a time period:",
-  ]), {
-    chat_id: chatId,
-    message_id: msgId,
-    parse_mode: "Markdown",
-    reply_markup: { inline_keyboard: keyboard },
-  });
-}
-
-async function showTrendingList(
-  bot: TelegramBot, chatId: number, msgId: number, country: string, period: string
-) {
-  const countryName = COUNTRIES[country] ?? country.toUpperCase();
-
-  await bot.editMessageText(fmt([
-    `⏳ *Loading Charts…*`,
-    divider(),
-    `🌍 ${countryName}`,
-  ]), { chat_id: chatId, message_id: msgId, parse_mode: "Markdown" });
-
-  try {
-    const result = await fetchTrending(country, period);
-    const { podcasts } = result;
-
-    const lines = [
-      `🏆 *Trending Podcasts · ${result.period}*`,
+    await bot.editMessageText(fmt([
+      "📄 *Generating Transcript…*",
       divider(),
-      `🌍 ${result.country}`,
-      shortDivider(),
-      ...podcasts.map((p, i) =>
-        `${i + 1}. *${truncate(p.name, 38)}*\n    _${truncate(p.artist, 30)}_`
-      ),
+      `🎙 ${truncate(ep[0].title, 50)}`,
+      "",
+      `📦 ${(audioBuffer.length / 1048576).toFixed(1)} MB downloaded`,
+      "⏳ Transcribing with Whisper…",
+    ]), { chat_id: chatId, message_id: statusMsg.message_id, parse_mode: "Markdown" });
+
+    // Call OpenAI Whisper
+    const { default: OpenAI } = await import("openai");
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    const ext = ep[0].audioUrl.match(/\.(mp3|mp4|m4a|ogg|wav|webm|flac)(\?.*)?$/i)?.[1] ?? "mp3";
+    const file = new File([audioBuffer], `episode.${ext}`, { type: `audio/${ext}` });
+
+    const transcription = await openai.audio.transcriptions.create({
+      model: "whisper-1",
+      file,
+      response_format: "text",
+    });
+
+    const transcript = String(transcription).trim();
+    if (!transcript) throw new Error("Whisper returned an empty transcript.");
+
+    await bot.editMessageText(fmt([
+      "📄 *Generating PDF…*",
       divider(),
-      "_Tap a podcast to subscribe._",
-    ];
+      `🎙 ${truncate(ep[0].title, 50)}`,
+      "",
+      "⏳ Building your document…",
+    ]), { chat_id: chatId, message_id: statusMsg.message_id, parse_mode: "Markdown" });
 
-    const keyboard: TelegramBot.InlineKeyboardButton[][] = podcasts.map((p, i) => [{
-      text: `${i + 1}. ${truncate(p.name, 32)}`,
-      callback_data: `trend_sub:${p.id}:${encodeURIComponent(p.name.slice(0, 40))}`,
-    }]);
+    const pdfBuffer = await generateTranscriptPdf({
+      podcastTitle: feed[0]?.title ?? "Podcast",
+      episodeTitle: ep[0].title,
+      pubDate:      ep[0].pubDate,
+      duration:     ep[0].duration,
+      transcript,
+    });
 
-    keyboard.push([
-      { text: "◀️ Change Period", callback_data: `trend_c:${country}` },
-      { text: "🌍 Change Country", callback_data: "trending_countries" },
-    ]);
+    await bot.deleteMessage(chatId, statusMsg.message_id);
 
-    await bot.editMessageText(lines.join("\n"), {
-      chat_id: chatId,
-      message_id: msgId,
+    await bot.sendDocument(chatId, pdfBuffer as any, {
+      caption: fmt([
+        `📄 *Transcript*`,
+        divider(),
+        `🎙 ${truncate(ep[0].title, 50)}`,
+        `📻 ${truncate(feed[0]?.title ?? "", 40)}`,
+      ]),
       parse_mode: "Markdown",
-      reply_markup: { inline_keyboard: keyboard },
+    }, {
+      filename: `transcript_${ep[0].id}.pdf`,
+      contentType: "application/pdf",
     });
 
   } catch (err: any) {
     await bot.editMessageText(fmt([
-      "❌ *Charts Unavailable*",
+      "❌ *Transcript Failed*",
       divider(),
-      "Unable to retrieve trending data at this time.",
-      "_Please try again shortly._",
-    ]), { chat_id: chatId, message_id: msgId, parse_mode: "Markdown" });
-  }
-}
-
-async function subscribeToTrending(
-  bot: TelegramBot, chatId: number, msgId: number, itunesId: string, name: string
-) {
-  await bot.editMessageText(fmt([
-    "⏳ *Resolving Feed…*",
-    divider(),
-    `📻 ${name}`,
-    "",
-    "Fetching the RSS feed from Apple Podcasts…",
-  ]), { chat_id: chatId, message_id: msgId, parse_mode: "Markdown" });
-
-  try {
-    const rssUrl = await resolveRssFeed(itunesId);
-
-    if (!rssUrl) {
-      await bot.editMessageText(fmt([
-        "❌ *Feed Not Found*",
-        divider(),
-        `📻 ${name}`,
-        "",
-        "Apple Podcasts did not return an RSS URL for this podcast.",
-        "Try subscribing manually via /add.",
-      ]), { chat_id: chatId, message_id: msgId, parse_mode: "Markdown" });
-      return;
-    }
-
-    // Check if already subscribed
-    const existing = await db.select().from(feedsTable)
-      .where(and(eq(feedsTable.chatId, String(chatId)), eq(feedsTable.url, rssUrl)))
-      .limit(1);
-
-    if (existing.length > 0) {
-      await bot.editMessageText(fmt([
-        "⚠️ *Already Subscribed*",
-        divider(),
-        `📻 ${name}`,
-        "",
-        "You are already subscribed to this podcast.",
-        "Use /feeds to browse it.",
-      ]), { chat_id: chatId, message_id: msgId, parse_mode: "Markdown" });
-      return;
-    }
-
-    // Fetch episodes
-    const feedData = await fetchFeed(rssUrl);
-
-    const [feed] = await db.insert(feedsTable).values({
-      chatId: String(chatId),
-      url: rssUrl,
-      title: feedData.title || name,
-      lastChecked: new Date(),
-    }).returning();
-
-    const episodes = feedData.episodes.slice(0, 50);
-    if (episodes.length > 0) {
-      await db.insert(episodesTable).values(
-        episodes.map((ep) => ({
-          feedId: feed.id,
-          guid: ep.guid,
-          title: ep.title,
-          description: ep.description,
-          audioUrl: ep.audioUrl,
-          pubDate: ep.pubDate,
-          duration: ep.duration,
-        }))
-      ).onConflictDoNothing();
-    }
-
-    await bot.editMessageText(fmt([
-      "✅ *Subscription Added*",
-      divider(),
-      `📻 *${truncate(feedData.title || name, 45)}*`,
-      `🎙 ${episodes.length} episode${episodes.length === 1 ? "" : "s"} loaded`,
-      "",
-      "Use /feeds to browse your subscriptions.",
-      "Use /latest to see the newest episodes.",
-    ]), { chat_id: chatId, message_id: msgId, parse_mode: "Markdown" });
-
-  } catch (err: any) {
-    await bot.editMessageText(fmt([
-      "❌ *Subscription Failed*",
-      divider(),
-      `_${truncate(String(err?.message || err), 80)}_`,
-      "",
-      "Please try subscribing manually via /add.",
-    ]), { chat_id: chatId, message_id: msgId, parse_mode: "Markdown" });
+      `_${truncate(String(err?.message ?? err), 100)}_`,
+    ]), { chat_id: chatId, message_id: statusMsg.message_id, parse_mode: "Markdown" });
   }
 }
 
@@ -760,8 +833,7 @@ async function showLatest(bot: TelegramBot, chatId: number) {
   if (feeds.length === 0) {
     await bot.sendMessage(chatId, fmt([
       "📭 *No Subscriptions Yet*",
-      "/add — Subscribe via RSS URL",
-      "/trending — Discover trending podcasts",
+      "/browse — Search iTunes · /trending — By country",
     ]), { parse_mode: "Markdown" });
     return;
   }
@@ -770,15 +842,14 @@ async function showLatest(bot: TelegramBot, chatId: number) {
   const episodes = await db.select().from(episodesTable)
     .where(sql`${episodesTable.feedId} = ANY(${sql`ARRAY[${sql.join(feedIds.map(id => sql`${id}`), sql`, `)}]::int[]`})`)
     .orderBy(desc(episodesTable.pubDate))
-    .limit(8);
+    .limit(10);
 
-  if (episodes.length === 0) {
-    await bot.sendMessage(chatId, "📭 No episodes found. Try /refresh to update your feeds.", { parse_mode: "Markdown" });
+  if (!episodes.length) {
+    await bot.sendMessage(chatId, "📭 No episodes found. Try /refresh.", { parse_mode: "Markdown" });
     return;
   }
 
   const feedMap = new Map(feeds.map((f) => [f.id, f.title]));
-
   const keyboard: TelegramBot.InlineKeyboardButton[][] = episodes.map((ep, i) => [{
     text: `${i + 1}. ${ep.listened ? "✅" : "🔵"} ${truncate(ep.title, 30)}`,
     callback_data: `ep:${ep.id}`,
@@ -792,34 +863,30 @@ async function showLatest(bot: TelegramBot, chatId: number) {
     ),
     divider(),
     "_Tap an episode for details & download._",
-  ]), {
-    parse_mode: "Markdown",
-    reply_markup: { inline_keyboard: keyboard },
-  });
+  ]), { parse_mode: "Markdown", reply_markup: { inline_keyboard: keyboard } });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// QUEUE
+// QUEUE / FAVOURITES / SEARCH / STATS
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function showQueue(bot: TelegramBot, chatId: number) {
   const queue = await db.select({
-    queueId: queueTable.id,
-    position: queueTable.position,
     episodeId: queueTable.episodeId,
-    title: episodesTable.title,
-    listened: episodesTable.listened,
+    position:  queueTable.position,
+    title:     episodesTable.title,
+    listened:  episodesTable.listened,
   })
     .from(queueTable)
     .innerJoin(episodesTable, eq(queueTable.episodeId, episodesTable.id))
     .where(eq(queueTable.chatId, String(chatId)))
     .orderBy(queueTable.position);
 
-  if (queue.length === 0) {
+  if (!queue.length) {
     await bot.sendMessage(chatId, fmt([
       "📭 *Queue is Empty*",
       divider(),
-      "Add episodes to your queue from /latest or /feeds.",
+      "Add episodes from /latest or /feeds.",
     ]), { parse_mode: "Markdown" });
     return;
   }
@@ -830,39 +897,29 @@ async function showQueue(bot: TelegramBot, chatId: number) {
   ]);
 
   await bot.sendMessage(chatId, fmt([
-    `⏭ *Playback Queue · ${queue.length} episode${queue.length === 1 ? "" : "s"}*`,
+    `⏭ *Playback Queue · ${queue.length}*`,
     divider(),
-    ...queue.map((q, i) =>
-      `${i + 1}. ${q.listened ? "✅" : "🔵"} ${truncate(q.title, 42)}`
-    ),
-  ]), {
-    parse_mode: "Markdown",
-    reply_markup: { inline_keyboard: keyboard },
-  });
+    ...queue.map((q, i) => `${i + 1}. ${q.listened ? "✅" : "🔵"} ${truncate(q.title, 42)}`),
+  ]), { parse_mode: "Markdown", reply_markup: { inline_keyboard: keyboard } });
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// FAVOURITES
-// ═══════════════════════════════════════════════════════════════════════════
 
 async function showFavourites(bot: TelegramBot, chatId: number) {
   const favs = await db.select({
-    favId: favoritesTable.id,
     episodeId: episodesTable.id,
-    title: episodesTable.title,
-    listened: episodesTable.listened,
+    title:     episodesTable.title,
+    listened:  episodesTable.listened,
   })
     .from(favoritesTable)
     .innerJoin(episodesTable, eq(favoritesTable.episodeId, episodesTable.id))
     .where(eq(favoritesTable.chatId, String(chatId)))
     .orderBy(desc(favoritesTable.createdAt))
-    .limit(10);
+    .limit(20);
 
-  if (favs.length === 0) {
+  if (!favs.length) {
     await bot.sendMessage(chatId, fmt([
       "📭 *No Favourites Yet*",
       divider(),
-      "Tap ❤️ on any episode to add it to your favourites.",
+      "Tap ❤️ on any episode to save it here.",
     ]), { parse_mode: "Markdown" });
     return;
   }
@@ -873,46 +930,35 @@ async function showFavourites(bot: TelegramBot, chatId: number) {
   }]);
 
   await bot.sendMessage(chatId, fmt([
-    `❤️ *Favourites · ${favs.length} episode${favs.length === 1 ? "" : "s"}*`,
+    `❤️ *Favourites · ${favs.length}*`,
     divider(),
-    ...favs.map((f, i) =>
-      `${i + 1}. ${f.listened ? "✅" : "🔵"} ${truncate(f.title, 42)}`
-    ),
-  ]), {
-    parse_mode: "Markdown",
-    reply_markup: { inline_keyboard: keyboard },
-  });
+    ...favs.map((f, i) => `${i + 1}. ${f.listened ? "✅" : "🔵"} ${truncate(f.title, 42)}`),
+  ]), { parse_mode: "Markdown", reply_markup: { inline_keyboard: keyboard } });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// SEARCH
-// ═══════════════════════════════════════════════════════════════════════════
-
-async function handleSearch(bot: TelegramBot, chatId: number, query: string) {
+async function handleEpisodeSearch(bot: TelegramBot, chatId: number, query: string) {
   const feeds = await db.select({ id: feedsTable.id }).from(feedsTable)
     .where(eq(feedsTable.chatId, String(chatId)));
 
-  if (feeds.length === 0) {
+  if (!feeds.length) {
     await bot.sendMessage(chatId, "📭 No subscriptions found. Please add a podcast first.", { parse_mode: "Markdown" });
     return;
   }
 
   const feedIds = feeds.map((f) => f.id);
   const results = await db.select().from(episodesTable)
-    .where(
-      and(
-        sql`${episodesTable.feedId} = ANY(${sql`ARRAY[${sql.join(feedIds.map(id => sql`${id}`), sql`, `)}]::int[]`})`,
-        like(episodesTable.title, `%${query}%`)
-      )
-    )
+    .where(and(
+      sql`${episodesTable.feedId} = ANY(${sql`ARRAY[${sql.join(feedIds.map(id => sql`${id}`), sql`, `)}]::int[]`})`,
+      like(episodesTable.title, `%${query}%`)
+    ))
     .orderBy(desc(episodesTable.pubDate))
-    .limit(8);
+    .limit(15);
 
-  if (results.length === 0) {
+  if (!results.length) {
     await bot.sendMessage(chatId, fmt([
       `🔍 *No Results for "${truncate(query, 30)}"*`,
       divider(),
-      "Please try a different search term.",
+      "Try a different search term.",
     ]), { parse_mode: "Markdown" });
     return;
   }
@@ -923,45 +969,34 @@ async function handleSearch(bot: TelegramBot, chatId: number, query: string) {
   }]);
 
   await bot.sendMessage(chatId, fmt([
-    `🔍 *Results for "${truncate(query, 25)}" · ${results.length}*`,
+    `🔍 *"${truncate(query, 25)}" · ${results.length} results*`,
     divider(),
     ...results.map((ep, i) =>
       `${i + 1}. ${ep.listened ? "✅" : "🔵"} ${truncate(ep.title, 42)}`
     ),
-  ]), {
-    parse_mode: "Markdown",
-    reply_markup: { inline_keyboard: keyboard },
-  });
+  ]), { parse_mode: "Markdown", reply_markup: { inline_keyboard: keyboard } });
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// STATS
-// ═══════════════════════════════════════════════════════════════════════════
 
 async function showStats(bot: TelegramBot, chatId: number) {
   const feeds = await db.select({ id: feedsTable.id }).from(feedsTable)
     .where(eq(feedsTable.chatId, String(chatId)));
 
-  if (feeds.length === 0) {
-    await bot.sendMessage(chatId, "📭 No statistics yet. Please add a podcast first.", { parse_mode: "Markdown" });
+  if (!feeds.length) {
+    await bot.sendMessage(chatId, "📭 No statistics yet. Please subscribe to a podcast first.", { parse_mode: "Markdown" });
     return;
   }
 
   const feedIds = feeds.map((f) => f.id);
-  const feedIdArr = sql`ARRAY[${sql.join(feedIds.map(id => sql`${id}`), sql`, `)}]::int[]`;
+  const arr = sql`ARRAY[${sql.join(feedIds.map(id => sql`${id}`), sql`, `)}]::int[]`;
 
-  const [totalEps, listenedEps, favCount, queueCount] = await Promise.all([
-    db.select({ c: count() }).from(episodesTable).where(sql`${episodesTable.feedId} = ANY(${feedIdArr})`),
-    db.select({ c: count() }).from(episodesTable).where(and(
-      sql`${episodesTable.feedId} = ANY(${feedIdArr})`,
-      eq(episodesTable.listened, true)
-    )),
-    db.select({ c: count() }).from(favoritesTable).where(eq(favoritesTable.chatId, String(chatId))),
-    db.select({ c: count() }).from(queueTable).where(eq(queueTable.chatId, String(chatId))),
-  ]);
+  const [[{ c: total }], [{ c: listened }], [{ c: favCount }], [{ c: queueCount }]] =
+    await Promise.all([
+      db.select({ c: count() }).from(episodesTable).where(sql`${episodesTable.feedId} = ANY(${arr})`),
+      db.select({ c: count() }).from(episodesTable).where(and(sql`${episodesTable.feedId} = ANY(${arr})`, eq(episodesTable.listened, true))),
+      db.select({ c: count() }).from(favoritesTable).where(eq(favoritesTable.chatId, String(chatId))),
+      db.select({ c: count() }).from(queueTable).where(eq(queueTable.chatId, String(chatId))),
+    ]);
 
-  const total = totalEps[0].c;
-  const listened = listenedEps[0].c;
   const pct = total > 0 ? Math.round((listened / total) * 100) : 0;
 
   await bot.sendMessage(chatId, fmt([
@@ -974,8 +1009,8 @@ async function showStats(bot: TelegramBot, chatId: number) {
     "",
     `${progressBar(pct)} ${pct}%`,
     divider(),
-    `❤️ Favourites       · ${favCount[0].c}`,
-    `⏭ Queue             · ${queueCount[0].c}`,
+    `❤️ Favourites · ${favCount}`,
+    `⏭ Queue       · ${queueCount}`,
   ]), { parse_mode: "Markdown" });
 }
 
@@ -996,26 +1031,18 @@ async function refreshFeed(bot: TelegramBot, chatId: number, msgId: number, feed
   try {
     const feedData = await fetchFeed(feed[0].url);
     let newCount = 0;
-
-    for (const ep of feedData.episodes.slice(0, 50)) {
+    for (const ep of feedData.episodes) {
       const exists = await db.select({ id: episodesTable.id }).from(episodesTable)
         .where(and(eq(episodesTable.feedId, feedId), eq(episodesTable.guid, ep.guid)))
         .limit(1);
-
-      if (exists.length === 0) {
+      if (!exists.length) {
         await db.insert(episodesTable).values({
-          feedId,
-          guid: ep.guid,
-          title: ep.title,
-          description: ep.description,
-          audioUrl: ep.audioUrl,
-          pubDate: ep.pubDate,
-          duration: ep.duration,
+          feedId, guid: ep.guid, title: ep.title, description: ep.description,
+          audioUrl: ep.audioUrl, pubDate: ep.pubDate, duration: ep.duration,
         });
         newCount++;
       }
     }
-
     await db.update(feedsTable).set({ lastChecked: new Date() }).where(eq(feedsTable.id, feedId));
 
     await bot.editMessageText(fmt([
@@ -1030,51 +1057,42 @@ async function refreshFeed(bot: TelegramBot, chatId: number, msgId: number, feed
     await bot.editMessageText(fmt([
       "❌ *Refresh Failed*",
       divider(),
-      `_${truncate(String(err?.message || err), 80)}_`,
+      `_${truncate(String(err?.message ?? err), 80)}_`,
     ]), { chat_id: chatId, message_id: msgId, parse_mode: "Markdown" });
   }
 }
 
 async function refreshAllFeeds(bot: TelegramBot, chatId: number) {
   const feeds = await db.select().from(feedsTable).where(eq(feedsTable.chatId, String(chatId)));
-
-  if (feeds.length === 0) {
+  if (!feeds.length) {
     await bot.sendMessage(chatId, "📭 No subscriptions to refresh.", { parse_mode: "Markdown" });
     return;
   }
 
   const msg = await bot.sendMessage(chatId, fmt([
     `🔄 *Refreshing ${feeds.length} Feed${feeds.length === 1 ? "" : "s"}…*`,
-    divider(),
-    "⏳ Please wait…",
+    divider(), "⏳ Please wait…",
   ]), { parse_mode: "Markdown" });
 
   let totalNew = 0;
-
   for (const feed of feeds) {
     try {
       const feedData = await fetchFeed(feed.url);
-      for (const ep of feedData.episodes.slice(0, 50)) {
+      for (const ep of feedData.episodes) {
         const exists = await db.select({ id: episodesTable.id }).from(episodesTable)
           .where(and(eq(episodesTable.feedId, feed.id), eq(episodesTable.guid, ep.guid)))
           .limit(1);
-        if (exists.length === 0) {
+        if (!exists.length) {
           await db.insert(episodesTable).values({
-            feedId: feed.id,
-            guid: ep.guid,
-            title: ep.title,
-            description: ep.description,
-            audioUrl: ep.audioUrl,
-            pubDate: ep.pubDate,
-            duration: ep.duration,
+            feedId: feed.id, guid: ep.guid, title: ep.title,
+            description: ep.description, audioUrl: ep.audioUrl,
+            pubDate: ep.pubDate, duration: ep.duration,
           });
           totalNew++;
         }
       }
       await db.update(feedsTable).set({ lastChecked: new Date() }).where(eq(feedsTable.id, feed.id));
-    } catch {
-      // Skip any feeds that fail silently
-    }
+    } catch { /* skip failed feeds silently */ }
   }
 
   await bot.editMessageText(fmt([
@@ -1093,33 +1111,23 @@ async function refreshAllFeeds(bot: TelegramBot, chatId: number) {
 
 async function toggleFavourite(bot: TelegramBot, chatId: number, msgId: number, epId: number) {
   const existing = await db.select().from(favoritesTable)
-    .where(and(eq(favoritesTable.chatId, String(chatId)), eq(favoritesTable.episodeId, epId)))
-    .limit(1);
-
+    .where(and(eq(favoritesTable.chatId, String(chatId)), eq(favoritesTable.episodeId, epId))).limit(1);
   if (existing.length > 0) {
     await db.delete(favoritesTable).where(eq(favoritesTable.id, existing[0].id));
   } else {
     await db.insert(favoritesTable).values({ chatId: String(chatId), episodeId: epId });
   }
-
   await showEpisodeDetail(bot, chatId, msgId, epId);
 }
 
 async function addToQueue(bot: TelegramBot, chatId: number, msgId: number, epId: number) {
   const existing = await db.select().from(queueTable)
-    .where(and(eq(queueTable.chatId, String(chatId)), eq(queueTable.episodeId, epId)))
-    .limit(1);
-
-  if (existing.length === 0) {
-    const maxPos = await db.select({ m: sql<number>`COALESCE(MAX(${queueTable.position}), 0)` })
+    .where(and(eq(queueTable.chatId, String(chatId)), eq(queueTable.episodeId, epId))).limit(1);
+  if (!existing.length) {
+    const [{ m }] = await db.select({ m: sql<number>`COALESCE(MAX(${queueTable.position}), 0)` })
       .from(queueTable).where(eq(queueTable.chatId, String(chatId)));
-    await db.insert(queueTable).values({
-      chatId: String(chatId),
-      episodeId: epId,
-      position: (maxPos[0].m || 0) + 1,
-    });
+    await db.insert(queueTable).values({ chatId: String(chatId), episodeId: epId, position: (m || 0) + 1 });
   }
-
   await showEpisodeDetail(bot, chatId, msgId, epId);
 }
 
@@ -1140,17 +1148,14 @@ async function markListened(bot: TelegramBot, chatId: number, msgId: number, epI
 async function deleteFeed(bot: TelegramBot, chatId: number, msgId: number, feedId: number) {
   const feed = await db.select().from(feedsTable).where(eq(feedsTable.id, feedId)).limit(1);
   if (!feed[0]) return;
-
   const eps = await db.select({ id: episodesTable.id }).from(episodesTable)
     .where(eq(episodesTable.feedId, feedId));
-
   for (const ep of eps) {
     await db.delete(favoritesTable).where(eq(favoritesTable.episodeId, ep.id));
     await db.delete(queueTable).where(eq(queueTable.episodeId, ep.id));
   }
   await db.delete(episodesTable).where(eq(episodesTable.feedId, feedId));
   await db.delete(feedsTable).where(eq(feedsTable.id, feedId));
-
   await bot.editMessageText(fmt([
     `🗑 *Subscription Removed*`,
     divider(),

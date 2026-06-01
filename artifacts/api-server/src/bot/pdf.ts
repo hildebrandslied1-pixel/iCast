@@ -1,0 +1,185 @@
+import PDFDocument from "pdfkit";
+import { Readable } from "stream";
+
+export interface TranscriptPdfOptions {
+  podcastTitle: string;
+  episodeTitle: string;
+  pubDate?: Date | null;
+  duration?: string | null;
+  transcript: string;
+}
+
+export async function generateTranscriptPdf(opts: TranscriptPdfOptions): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const { podcastTitle, episodeTitle, pubDate, transcript } = opts;
+
+    const doc = new PDFDocument({
+      size: "A4",
+      margins: { top: 60, bottom: 60, left: 65, right: 65 },
+      info: {
+        Title: episodeTitle,
+        Author: podcastTitle,
+        Subject: "Podcast Transcript",
+        Creator: "Podcast Bot",
+      },
+    });
+
+    const chunks: Buffer[] = [];
+    doc.on("data", (c: Buffer) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    const W = doc.page.width - 130; // usable width
+    const DARK = "#0f0f0f";
+    const ACCENT = "#1a1a2e";
+    const MUTED = "#555566";
+    const RULE = "#ddddee";
+    const BG_BAND = "#f5f5fa";
+
+    // ── Top accent band ────────────────────────────────────────────────────
+    doc.rect(0, 0, doc.page.width, 8).fill(ACCENT);
+
+    // ── Logo area ──────────────────────────────────────────────────────────
+    doc.moveDown(1);
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(9)
+      .fillColor(MUTED)
+      .text("PODCAST TRANSCRIPT", 65, 30, { characterSpacing: 2.5 });
+
+    // ── Thin rule ──────────────────────────────────────────────────────────
+    doc
+      .moveTo(65, 50)
+      .lineTo(65 + W, 50)
+      .lineWidth(0.5)
+      .strokeColor(RULE)
+      .stroke();
+
+    // ── Podcast name ──────────────────────────────────────────────────────
+    doc
+      .font("Helvetica")
+      .fontSize(10)
+      .fillColor(MUTED)
+      .text(podcastTitle, 65, 62, { width: W });
+
+    // ── Episode title ─────────────────────────────────────────────────────
+    const titleY = (doc as any).y + 6;
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(20)
+      .fillColor(DARK)
+      .text(episodeTitle, 65, titleY, { width: W, lineGap: 4 });
+
+    // ── Metadata pill row ─────────────────────────────────────────────────
+    const metaY = (doc as any).y + 14;
+    doc
+      .rect(65, metaY, W, 26)
+      .fill(BG_BAND);
+
+    const dateStr = pubDate
+      ? pubDate.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })
+      : "—";
+
+    doc
+      .font("Helvetica")
+      .fontSize(9)
+      .fillColor(MUTED)
+      .text(`📅  ${dateStr}`, 75, metaY + 8, { continued: true, characterSpacing: 0.3 })
+      .text("      🎙  Podcast Bot Transcript", { characterSpacing: 0.3 });
+
+    // ── Divider ────────────────────────────────────────────────────────────
+    const divY = metaY + 38;
+    doc
+      .moveTo(65, divY)
+      .lineTo(65 + W, divY)
+      .lineWidth(0.5)
+      .strokeColor(RULE)
+      .stroke();
+
+    // ── Intro label ────────────────────────────────────────────────────────
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(8)
+      .fillColor(MUTED)
+      .text("T R A N S C R I P T", 65, divY + 14, { characterSpacing: 2 });
+
+    // ── Body text ──────────────────────────────────────────────────────────
+    doc
+      .font("Helvetica")
+      .fontSize(11)
+      .fillColor(DARK)
+      .moveDown(1.2);
+
+    // Split into paragraphs (blank lines become paragraph breaks)
+    const paragraphs = transcript
+      .split(/\n{2,}/)
+      .map((p) => p.replace(/\n/g, " ").trim())
+      .filter(Boolean);
+
+    for (let i = 0; i < paragraphs.length; i++) {
+      const para = paragraphs[i];
+
+      // Speaker label heuristic: all-caps word followed by colon
+      const speakerMatch = para.match(/^([A-Z][A-Z\s\-\.]+):\s*/);
+      if (speakerMatch) {
+        const speaker = speakerMatch[1];
+        const rest = para.slice(speakerMatch[0].length);
+
+        doc
+          .font("Helvetica-Bold")
+          .fontSize(9)
+          .fillColor(ACCENT)
+          .text(speaker, { continued: false });
+
+        doc
+          .font("Helvetica")
+          .fontSize(11)
+          .fillColor(DARK)
+          .text(rest, { lineGap: 3, paragraphGap: 6, width: W });
+      } else {
+        doc
+          .font("Helvetica")
+          .fontSize(11)
+          .fillColor(DARK)
+          .text(para, { lineGap: 3, paragraphGap: 8, width: W });
+      }
+
+      if (i < paragraphs.length - 1) doc.moveDown(0.4);
+    }
+
+    // ── Footer on every page ───────────────────────────────────────────────
+    const range = doc.bufferedPageRange();
+    for (let p = range.start; p < range.start + range.count; p++) {
+      doc.switchToPage(p);
+
+      // Bottom rule
+      const bottom = doc.page.height - 50;
+      doc
+        .moveTo(65, bottom)
+        .lineTo(65 + W, bottom)
+        .lineWidth(0.4)
+        .strokeColor(RULE)
+        .stroke();
+
+      doc
+        .font("Helvetica")
+        .fontSize(8)
+        .fillColor(MUTED)
+        .text(
+          `${podcastTitle}  ·  Generated by Podcast Bot`,
+          65,
+          bottom + 8,
+          { width: W / 2, align: "left" }
+        )
+        .text(`Page ${p + 1} of ${range.count}`, 65, bottom + 8, {
+          width: W,
+          align: "right",
+        });
+
+      // Bottom accent strip
+      doc.rect(0, doc.page.height - 8, doc.page.width, 8).fill(ACCENT);
+    }
+
+    doc.end();
+  });
+}

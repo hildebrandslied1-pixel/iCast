@@ -1,11 +1,10 @@
 import RSSParser from "rss-parser";
 
-const parser = new RSSParser({ timeout: 15000 });
+const parser = new RSSParser({ timeout: 20000 });
 
 export interface ParsedFeed {
   title: string;
   description?: string;
-  imageUrl?: string;
   episodes: ParsedEpisode[];
 }
 
@@ -20,19 +19,19 @@ export interface ParsedEpisode {
 
 export async function fetchFeed(url: string): Promise<ParsedFeed> {
   const feed = await parser.parseURL(url);
-  const episodes: ParsedEpisode[] = (feed.items || []).map((item: any) => ({
-    guid: item.guid || item.link || item.title || String(Math.random()),
-    title: item.title || "Untitled",
+
+  const episodes: ParsedEpisode[] = (feed.items ?? []).map((item: any) => ({
+    guid:        item.guid || item.link || item.title || String(Math.random()),
+    title:       item.title || "Untitled",
     description: item.contentSnippet || item.summary || item.content || "",
-    audioUrl: item.enclosure?.url || item.link,
-    pubDate: item.pubDate ? new Date(item.pubDate) : undefined,
-    duration: item.duration || item["itunes:duration"] || "",
+    audioUrl:    item.enclosure?.url || item.link,
+    pubDate:     item.pubDate ? new Date(item.pubDate) : undefined,
+    duration:    item.duration || item["itunes:duration"] || "",
   }));
 
   return {
-    title: feed.title || "Podcast",
+    title:       feed.title || "Podcast",
     description: feed.description || "",
-    imageUrl: (feed as any).image?.url || (feed as any).itunes?.image || "",
-    episodes,
+    episodes,                       // No arbitrary cap — store everything the feed provides
   };
 }
