@@ -1,12 +1,11 @@
 import RSSParser from "rss-parser";
 
-const parser = new RSSParser({
-  timeout: 15000,
-});
+const parser = new RSSParser({ timeout: 15000 });
 
 export interface ParsedFeed {
   title: string;
   description?: string;
+  imageUrl?: string;
   episodes: ParsedEpisode[];
 }
 
@@ -23,7 +22,7 @@ export async function fetchFeed(url: string): Promise<ParsedFeed> {
   const feed = await parser.parseURL(url);
   const episodes: ParsedEpisode[] = (feed.items || []).map((item: any) => ({
     guid: item.guid || item.link || item.title || String(Math.random()),
-    title: item.title || "بدون عنوان",
+    title: item.title || "Untitled",
     description: item.contentSnippet || item.summary || item.content || "",
     audioUrl: item.enclosure?.url || item.link,
     pubDate: item.pubDate ? new Date(item.pubDate) : undefined,
@@ -31,8 +30,9 @@ export async function fetchFeed(url: string): Promise<ParsedFeed> {
   }));
 
   return {
-    title: feed.title || "بودكاست",
+    title: feed.title || "Podcast",
     description: feed.description || "",
+    imageUrl: (feed as any).image?.url || (feed as any).itunes?.image || "",
     episodes,
   };
 }

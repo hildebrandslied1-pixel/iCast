@@ -41,7 +41,7 @@ export function parseDuration(dur: string | null | undefined): number {
 
 export function formatDate(date: Date | null | undefined): string {
   if (!date) return "—";
-  return date.toLocaleDateString("ar-SA", { day: "numeric", month: "short", year: "numeric" });
+  return date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
 export function episodeCard(opts: {
@@ -57,24 +57,24 @@ export function episodeCard(opts: {
   inQueue?: boolean;
 }): string {
   const { index, total, title, feedTitle, pubDate, duration, listened, progress = 0, isFav, inQueue } = opts;
-  const headerBadge = listened ? "✅" : inQueue ? "⏭" : "🎙";
-  const indexStr = index !== undefined && total !== undefined ? `_حلقة ${index} من ${total}_` : "";
+  const badge = listened ? "✅" : inQueue ? "⏭" : "🎙";
+  const indexStr = index !== undefined && total !== undefined ? `_Episode ${index} of ${total}_` : "";
   const dur = parseDuration(duration);
   const durStr = dur > 0 ? formatDuration(dur) : "—";
   const progressStr = listened
-    ? "مكتمل"
+    ? "Completed"
     : progress > 0
     ? `${progressBar(progress * 100)} ${Math.round(progress * 100)}%`
-    : "جديدة";
+    : "Unplayed";
 
   return fmt([
-    `${headerBadge} *${truncate(title, 55)}*`,
+    `${badge} *${truncate(title, 55)}*`,
     divider(),
     feedTitle ? `📻 ${truncate(feedTitle, 30)}` : "",
     indexStr,
-    `⏱ المدة · ${durStr}`,
+    `⏱ Duration · ${durStr}`,
     `📅 ${formatDate(pubDate)}`,
-    `${isFav ? "❤️ مفضلة · " : ""}${progressStr}`,
+    `${isFav ? "❤️ Favourite · " : ""}${progressStr}`,
   ].filter(Boolean));
 }
 
@@ -88,25 +88,27 @@ export function feedCard(opts: {
   const { index, title, episodeCount, lastChecked } = opts;
   return fmt([
     `${index}. 📻 *${truncate(title, 45)}*`,
-    `     حلقات: ${episodeCount ?? "—"} · آخر تحديث: ${formatDate(lastChecked)}`,
+    `     Episodes: ${episodeCount ?? "—"} · Updated: ${formatDate(lastChecked)}`,
   ]);
 }
 
 export function welcomeMsg(): string {
   return fmt([
-    "🎙 *بودكاست بوت*",
+    "🎙 *Podcast Bot*",
     divider(),
-    "مرحباً بك في مدير البودكاست الخاص بك!",
+    "Welcome to your personal podcast manager.",
     "",
-    "📋 *الأوامر الرئيسية:*",
-    "/feeds — قائمة البودكاستات",
-    "/add — إضافة بودكاست جديد",
-    "/latest — آخر الحلقات",
-    "/queue — قائمة التشغيل",
-    "/favorites — المفضلة",
-    "/search — بحث في الحلقات",
-    "/stats — إحصائياتي",
+    "📋 *Commands:*",
+    "/feeds — Your subscriptions",
+    "/add — Add via RSS feed URL",
+    "/trending — Browse trending podcasts",
+    "/latest — Latest episodes",
+    "/queue — Playback queue",
+    "/favourites — Saved favourites",
+    "/search — Search episodes",
+    "/stats — Listening statistics",
+    "/refresh — Refresh all feeds",
     divider(),
-    "_أرسل رابط RSS لإضافة بودكاست مباشرة_ 🚀",
+    "_You may also send an RSS URL directly._ 🚀",
   ]);
 }
