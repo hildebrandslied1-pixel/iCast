@@ -47,10 +47,10 @@ export function fmtDate(d: Date | string | null | undefined): string {
   return dt.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
-/** Progress bar — 8 blocks wide */
+/** Progress bar — 10 blocks wide */
 export function bar(pct: number): string {
-  const f = Math.round(Math.max(0, Math.min(100, pct)) / 100 * 8);
-  return "█".repeat(f) + "░".repeat(8 - f);
+  const f = Math.round(Math.max(0, Math.min(100, pct)) / 100 * 10);
+  return "█".repeat(f) + "░".repeat(10 - f);
 }
 
 /** Spinner frames */
@@ -81,10 +81,11 @@ export function softError(situation: string, action: string): string {
 export function welcomeMsg(name: string, resumeEp?: { title: string; progress: number } | null): string {
   const lines = [
     `🎙 *iCast*`,
-    DIV,
-    `Hello ${esc(name)} 👋`,
+    `══════════════════════`,
     ``,
-    `Listen · Discover · Follow`,
+    `مرحباً ${esc(name)} 👋`,
+    ``,
+    `استمع · اكتشف · تابع`,
     DIV,
     `📻 /feeds`,
     `🆕 /latest`,
@@ -93,7 +94,7 @@ export function welcomeMsg(name: string, resumeEp?: { title: string; progress: n
   ];
   if (resumeEp) {
     lines.push(DIV);
-    lines.push(`▶️ *Continue Listening*`);
+    lines.push(`▶️ *تابع الاستماع*`);
     lines.push(`🎙 ${esc(trunc(resumeEp.title, 28))}`);
     lines.push(`${bar(resumeEp.progress)} ${resumeEp.progress}%`);
   }
@@ -122,6 +123,7 @@ export function helpMsg(): string {
     `/ask — Ask AI about episode`,
     `/playlist — Build a playlist`,
     `/import — Import OPML file`,
+    `/admin — Admin panel`,
     `/about — About iCast`,
   ].join("\n");
 }
@@ -130,7 +132,7 @@ export function helpMsg(): string {
 
 export function aboutMsg(): string {
   return [
-    `🎙 *iCast v2\\.0*`,
+    `🎙 *iCast v3\\.0*`,
     DIV,
     `Your personal podcast manager`,
     `Powered by Groq AI`,
@@ -139,6 +141,9 @@ export function aboutMsg(): string {
     `🧠 AI transcription & summaries`,
     `📝 Notes & bookmarks`,
     `📊 Listening statistics`,
+    `🎓 Harvard Professor Mode`,
+    `❓ 100 Critical Questions`,
+    `🛡 Admin & access control`,
   ].join("\n");
 }
 
@@ -206,7 +211,7 @@ export function feedCard(
   return lines.join("\n");
 }
 
-// ─── Episode card ─────────────────────────────────────────────────────────────
+// ─── Episode card (Artful Design) ─────────────────────────────────────────────
 
 export function episodeCard(ep: {
   title: string;
@@ -221,34 +226,51 @@ export function episodeCard(ep: {
   inQueue?: boolean;
   episodeNumber?: number | null;
 }): string {
-  const isPlayed = ep.listened || ep.isPlayed;
-  const isFav = ep.isFavourite || ep.isFav;
+  const isPlayed  = ep.listened || ep.isPlayed;
+  const isFav     = ep.isFavourite || ep.isFav;
+  const pct       = ep.progress ?? 0;
 
-  const now = Date.now();
+  const now   = Date.now();
   const isNew = ep.pubDate && (now - new Date(ep.pubDate).getTime()) < 48 * 3600 * 1000;
 
-  const badge = [
-    isNew ? "🆕" : "",
-    isFav ? "❤️" : "",
-    ep.progress && ep.progress > 0 && !isPlayed ? `▶️ ${ep.progress}%` : "",
-    isPlayed ? "✅" : "",
-  ].filter(Boolean).join("  ");
+  const dur  = ep.duration ? fmtDur(ep.duration) : "";
+  const date = ep.pubDate  ? fmtDate(ep.pubDate)  : "";
+
+  const numStr = ep.episodeNumber ? `EP\\.${ep.episodeNumber} ` : "";
 
   const lines: string[] = [];
-  const numStr = ep.episodeNumber ? `EP\\.${ep.episodeNumber} ` : "";
-  lines.push(`🎙 ${numStr}*${esc(trunc(ep.title, 28))}*`);
-  if (badge) lines.push(badge);
 
-  const meta: string[] = [];
-  if (ep.pubDate) meta.push(fmtDate(ep.pubDate));
-  if (ep.duration) meta.push(fmtDur(ep.duration));
-  if (meta.filter(Boolean).length) lines.push(meta.filter(Boolean).join("  ·  "));
+  lines.push(`🎙 *iCast*`);
+  lines.push(`══════════════════════`);
+  lines.push(``);
 
-  if (ep.feedTitle) lines.push(`📻 ${esc(trunc(ep.feedTitle, 22))}`);
+  if (ep.feedTitle) lines.push(`📻 *${esc(trunc(ep.feedTitle, 28))}*`);
+  lines.push(``);
 
-  if (ep.progress && ep.progress > 0 && !isPlayed) {
-    lines.push(`${bar(ep.progress)} ${ep.progress}%`);
+  lines.push(`🎧 *${numStr}${esc(trunc(ep.title, 30))}*`);
+  lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+
+  const metaParts: string[] = [];
+  if (dur)  metaParts.push(`⏱ ${esc(dur)}`);
+  if (date) metaParts.push(`📅 ${esc(date)}`);
+  if (metaParts.length) lines.push(metaParts.join("  ·  "));
+
+  lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+
+  if (isPlayed) {
+    lines.push(`✅ Completed`);
+  } else if (pct > 0) {
+    lines.push(`${bar(pct)}  ${pct}%`);
+  } else {
+    lines.push(`░░░░░░░░░░  0%`);
   }
+
+  const badges: string[] = [];
+  if (isNew)  badges.push(`🆕 New`);
+  if (isFav)  badges.push(`❤️ Favourite`);
+  if (ep.inQueue) badges.push(`⏭ In Queue`);
+  if (badges.length) lines.push(badges.join("  ·  "));
+
   return lines.join("\n");
 }
 
@@ -451,15 +473,32 @@ export function celebrationMsg(title: string): string {
   return [`🎉 *Episode Complete\\!*`, DIV, `🎙 ${esc(trunc(title, 28))}`].join("\n");
 }
 
-// ─── Back-compat shims (used in existing code) ────────────────────────────────
+// ─── Admin panel ──────────────────────────────────────────────────────────────
 
-export const divider  = () => DIV;
+export function adminPanelMsg(stats?: { totalUsers: number; pendingUsers: number; blockedUsers: number }): string {
+  const lines = [
+    `🛡 *لوحة تحكم الأدمن*`,
+    `══════════════════════`,
+  ];
+  if (stats) {
+    lines.push(`👥 المستخدمون: ${stats.totalUsers}`);
+    lines.push(`⏳ في الانتظار: ${stats.pendingUsers}`);
+    lines.push(`🚷 محظورون: ${stats.blockedUsers}`);
+    lines.push(DIV);
+  }
+  lines.push(`اختر من القائمة أدناه:`);
+  return lines.join("\n");
+}
+
+// ─── Back-compat shims ────────────────────────────────────────────────────────
+
+export const divider      = () => DIV;
 export const shortDivider = () => "──────────";
 export const fmt = (lines: string[]) => lines.join("\n");
-export const truncate = trunc;
-export const formatDuration = fmtDur;
-export const formatDate = fmtDate;
-export const progressBar = bar;
+export const truncate        = trunc;
+export const formatDuration  = fmtDur;
+export const formatDate      = fmtDate;
+export const progressBar     = bar;
 
 export function parseDuration(dur: string | null | undefined): number {
   if (!dur) return 0;

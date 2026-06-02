@@ -1,7 +1,8 @@
 /**
  * AI module — Groq Whisper transcription + Llama summaries & chat
- * Whisper limit is 25MB per request; chunks are kept at 23MB.
- * Every operation retries up to 3 times with back-off.
+ * Whisper limit is 25MB per request; chunks are kept at 20MB.
+ * Exponential backoff with 5 retries on 429 rate limit errors.
+ * Transcription queue: max 1 concurrent transcription.
  */
 
 import Groq, { toFile } from "groq-sdk";
@@ -9,13 +10,15 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 
-const CHUNK_BYTES = 23 * 1024 * 1024; // 23 MB — safely under Whisper's 25 MB limit
+const CHUNK_BYTES = 20 * 1024 * 1024; // 20 MB — safely under Whisper's 25 MB limit
 
 const MODELS = {
   transcribe: "whisper-large-v3",
-  summarize: "llama-3.3-70b-versatile",
-  chat: "llama-3.1-8b-instant",
-  recommend: "llama-3.1-8b-instant",
+  summarize:  "llama-3.3-70b-versatile",
+  chat:       "llama-3.1-8b-instant",
+  recommend:  "llama-3.1-8b-instant",
+  deep:       "llama-3.3-70b-versatile",
+  questions:  "llama-3.3-70b-versatile",
 } as const;
 
 function getGroq(): Groq {
@@ -24,17 +27,53 @@ function getGroq(): Groq {
   return new Groq({ apiKey });
 }
 
-async function withRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
+// ─── Transcription Queue ──────────────────────────────────────────────────────
+
+let transcriptionRunning = false;
+const transcriptionQueue: Array<{
+  resolve: (v: string) => void;
+  reject:  (e: unknown) => void;
+  fn:      () => Promise<string>;
+  position: number;
+  onProgress?: (msg: string) => Promise<void>;
+}> = [];
+let nextPosition = 0;
+
+async function processQueue(): Promise<void> {
+  if (transcriptionRunning || !transcriptionQueue.length) return;
+  transcriptionRunning = true;
+
+  const item = transcriptionQueue.shift()!;
+  try {
+    const result = await item.fn();
+    item.resolve(result);
+  } catch (e) {
+    item.reject(e);
+  } finally {
+    transcriptionRunning = false;
+    void processQueue();
+  }
+}
+
+// ─── Retry with 429 handling ──────────────────────────────────────────────────
+
+async function withRetry<T>(fn: () => Promise<T>, retries = 5): Promise<T> {
   for (let i = 0; i < retries; i++) {
     try {
       return await fn();
-    } catch (err) {
+    } catch (err: any) {
+      const is429 = err?.status === 429 || err?.message?.includes("429") || err?.message?.includes("rate limit");
+      const delay = is429
+        ? Math.pow(2, i) * 2000        // exponential: 2s, 4s, 8s, 16s, 32s
+        : 1500 * (i + 1);              // linear: 1.5s, 3s, 4.5s…
       if (i === retries - 1) throw err;
-      await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
   throw new Error("unreachable");
 }
+
+// ─── Transcribe buffer ────────────────────────────────────────────────────────
 
 async function transcribeBuffer(buf: Buffer, ext = "mp3"): Promise<string> {
   return withRetry(async () => {
@@ -49,12 +88,37 @@ async function transcribeBuffer(buf: Buffer, ext = "mp3"): Promise<string> {
   });
 }
 
+// ─── Public transcription API (with queue) ────────────────────────────────────
+
 export interface TranscribeOptions {
   onProgress?: (msg: string) => Promise<void>;
   language?: string;
 }
 
 export async function transcribeEpisodeFull(
+  audioUrl: string,
+  opts: TranscribeOptions = {}
+): Promise<string> {
+  const pos = nextPosition++;
+  const queueLen = transcriptionQueue.length;
+
+  if (transcriptionRunning || queueLen > 0) {
+    await opts.onProgress?.(`⏳ Transcription في الطابور... الموقع: ${queueLen + 1}`);
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    transcriptionQueue.push({
+      resolve,
+      reject,
+      position: pos,
+      onProgress: opts.onProgress,
+      fn: () => _transcribeEpisodeFull(audioUrl, opts),
+    });
+    void processQueue();
+  });
+}
+
+async function _transcribeEpisodeFull(
   audioUrl: string,
   opts: TranscribeOptions = {}
 ): Promise<string> {
@@ -153,13 +217,15 @@ async function fetchRangeWithRetry(url: string, start: number, end: number, atte
       clearTimeout(timeout);
     }
   } catch (err) {
-    if (attempt < 3) {
-      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+    if (attempt < 4) {
+      await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 1000));
       return fetchRangeWithRetry(url, start, end, attempt + 1);
     }
     throw err;
   }
 }
+
+// ─── Summarize ────────────────────────────────────────────────────────────────
 
 export async function summarizeText(
   text: string,
@@ -212,7 +278,9 @@ export async function generateSummary(
   });
 }
 
-export async function generateDetailedExplanation(
+// ─── Harvard Professor Deep Explanation ───────────────────────────────────────
+
+export async function generateDeepExplanation(
   transcript: string,
   podcastTitle: string,
   episodeTitle: string
@@ -220,22 +288,113 @@ export async function generateDetailedExplanation(
   return withRetry(async () => {
     const groq = getGroq();
     const resp = await groq.chat.completions.create({
-      model: MODELS.summarize,
-      max_tokens: 1200,
+      model: MODELS.deep,
+      max_tokens: 2000,
       messages: [
         {
           role: "system",
-          content: "You are a meticulous analyst. Extract every topic from the podcast transcript and explain it in depth. Use the same language as the transcript.",
+          content: `You are a Harvard Professor of the highest caliber.
+Your teaching method is Socratic and scaffolded.
+You assume the student has ZERO prior knowledge.
+You build concepts from absolute zero to expert level.
+
+For EVERY major piece of information in the transcript:
+1. Extract it as a distinct "Knowledge Unit"
+2. Verify its factual accuracy (mark as ✅ Verified or ⚠️ Unverified)
+3. Explain it simply, then technically, then at expert level
+4. Provide real-world examples and historical context
+5. Connect it to other fields
+
+Format each unit as:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📚 KNOWLEDGE UNIT #N
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔊 Original: "exact quote"
+
+✅ Status: [Verified / Unverified / Needs Source]
+
+🧒 Beginner: {simple analogy}
+🎓 Intermediate: {technical explanation}
+🏛️ Expert: {academic analysis}
+
+🔗 Connections: {related concepts}
+📖 Further Reading: {resources}
+
+End with:
+╔══════════════════════════════════╗
+║  📊 KNOWLEDGE ANALYSIS           ║
+╠══════════════════════════════════╣
+║  Total Units: N                  ║
+║  ✅ Verified: N                  ║
+║  ⚠️ Unverified: N                ║
+║  🔗 Links: N                     ║
+╚══════════════════════════════════╝`,
         },
         {
           role: "user",
-          content: `Podcast: "${podcastTitle}"\nEpisode: "${episodeTitle}"\n\nTranscript:\n${transcript.slice(0, 15000)}\n\nProvide a comprehensive breakdown covering every topic discussed, facts and figures, arguments, and action points.`,
+          content: `Podcast: "${podcastTitle}"\nEpisode: "${episodeTitle}"\n\nTranscript:\n${transcript.slice(0, 20000)}\n\nAnalyze EVERY claim, fact, and concept. Transform the listener into someone smarter than Harvard's best students. Use the same language as the transcript.`,
         },
       ],
     });
-    return resp.choices[0]?.message?.content?.trim() ?? "Detailed explanation unavailable.";
+    return resp.choices[0]?.message?.content?.trim() ?? "Deep explanation unavailable.";
   });
 }
+
+// ─── 100 Critical Thinking Questions ─────────────────────────────────────────
+
+export async function generateCriticalQuestions(
+  transcript: string,
+  podcastTitle: string,
+  episodeTitle: string,
+  seed?: number
+): Promise<string> {
+  return withRetry(async () => {
+    const groq = getGroq();
+    const seedLine = seed ? `Seed for randomness: ${seed}. Generate completely different questions than before.` : "";
+    const resp = await groq.chat.completions.create({
+      model: MODELS.questions,
+      max_tokens: 3000,
+      temperature: 0.9,
+      messages: [
+        {
+          role: "system",
+          content: `You are a Critical Thinking examiner from Harvard Business School.
+Generate exactly 20 thought-provoking questions based on the transcript (we send in batches).
+${seedLine}
+
+Categories (distribute evenly):
+1. 🧠 Logical Reasoning
+2. 🔍 Evidence Evaluation
+3. 🎯 Assumption Testing
+4. ⚖️ Ethical Dilemmas
+5. 🔮 Future Implications
+
+Each question must:
+- Reference a specific idea from the transcript
+- Challenge the listener to think deeper
+- Have no obvious "right" answer
+
+Format:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+❓ QUESTION #N · Category: {icon} {name}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📍 Context: "{relevant idea}"
+
+{The question itself}
+
+💭 Think about: {why this matters}`,
+        },
+        {
+          role: "user",
+          content: `Podcast: "${podcastTitle}"\nEpisode: "${episodeTitle}"\n\nTranscript:\n${transcript.slice(0, 20000)}\n\nGenerate 20 critical thinking questions. Use the same language as the transcript.`,
+        },
+      ],
+    });
+    return resp.choices[0]?.message?.content?.trim() ?? "Questions unavailable.";
+  });
+}
+
+// ─── Chat with episode ────────────────────────────────────────────────────────
 
 export async function chatWithEpisode(
   question: string,
@@ -260,6 +419,8 @@ export async function chatWithEpisode(
     return resp.choices[0]?.message?.content?.trim() ?? "";
   });
 }
+
+// ─── Recommendations ──────────────────────────────────────────────────────────
 
 export async function getRecommendations(feedTitles: string[], lang = "en"): Promise<string[]> {
   if (!feedTitles.length) return [];

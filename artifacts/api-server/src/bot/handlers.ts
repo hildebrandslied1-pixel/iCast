@@ -8,8 +8,9 @@ import {
   db, feedsTable, episodesTable, favoritesTable,
   queueTable, tagsTable, episodeTagsTable,
   userPrefsTable, bookmarksTable, ratingsTable,
+  usersTable, adminLogsTable, userActivityTable,
 } from "@workspace/db";
-import { eq, and, desc, like, count, sql, or, gt, isNotNull } from "drizzle-orm";
+import { eq, and, desc, like, count, sql, or, gt, isNotNull, inArray } from "drizzle-orm";
 import { fetchFeed, isValidFeedUrl } from "./rss.js";
 import {
   fetchTopCharts, searchPodcasts, resolveRssFeed,
@@ -19,7 +20,8 @@ import {
 import { generateTranscriptPdf } from "./pdf.js";
 import {
   transcribeEpisodeFull, summarizeText, generateSummary,
-  generateDetailedExplanation, chatWithEpisode, getRecommendations,
+  generateDeepExplanation,
+  generateCriticalQuestions, chatWithEpisode, getRecommendations,
   hasGroqKey,
 } from "./ai.js";
 import { sendEpisodeAudio } from "./downloader.js";
@@ -29,17 +31,27 @@ import {
   feedCard, episodeCard, feedListMsg, episodeListMsg, statsMsg,
   queueMsg, searchResultsMsg, summaryMsg, settingsMsg, notesMsg,
   discoverMsg, playlistMsg, celebrationMsg, doneMsg, errorMsg,
-  softError, loadingMsg, weeklyBarChart,
+  softError, loadingMsg, weeklyBarChart, adminPanelMsg,
   fmt, divider, shortDivider, truncate, formatDuration, formatDate,
   progressBar, parseDuration,
 } from "./formatter.js";
 import {
   MAIN_KEYBOARD, PANEL_BUTTONS, homeRow, HOME_BTN,
+  ADMIN_KEYBOARD, ADMIN_PANEL_BUTTONS,
   feedActions, episodeActions, paginationRow,
   confirmRow, queueItemActions, settingsRows, ratingKeyboard,
   sleepTimerRow, speedRow, discoverCategoriesKb,
 } from "./keyboards.js";
 import { logger } from "../lib/logger.js";
+import {
+  getOrCreateUser, handleStart, handleCaptchaAnswer,
+  authGate, logActivity,
+} from "./auth-flow.js";
+import {
+  notifyAdmins, logAdminAction, approveUser, rejectUser,
+  blockUser, unblockUser, promoteUser, demoteUser,
+  broadcastMessage, isAdmin, getAdminChatIds,
+} from "./admin.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -220,14 +232,21 @@ export function registerHandlers(bot: TelegramBot): void {
   // ── Slash commands ──────────────────────────────────────────────────────
   bot.onText(/^\/start/, async (msg) => {
     if (!rl(msg)) return;
-    const name = msg.from?.first_name ?? "Friend";
     logger.info({ userId: msg.from?.id, command: "/start" }, "command received");
+
+    // Auth flow: captcha / approval gate
+    const intercepted = await handleStart(bot, msg);
+    if (intercepted) return;
+
+    // Normal welcome
+    const name = msg.from?.first_name ?? "Friend";
     const resumeEp = await getResumeEpisode(String(msg.chat.id));
     let resumeInfo: { title: string; progress: number } | null = null;
     if (resumeEp) {
       resumeInfo = { title: resumeEp.title, progress: Math.round((resumeEp.progress ?? 0) * 100) };
       getSession(msg.chat.id).currentEpisodeId = resumeEp.id;
     }
+    void logActivity(String(msg.chat.id), "start");
     await sendMd(bot, msg.chat.id, welcomeMsg(name, resumeInfo), {
       reply_markup: { keyboard: MAIN_KEYBOARD, resize_keyboard: true, is_persistent: true },
     });
@@ -374,6 +393,82 @@ export function registerHandlers(bot: TelegramBot): void {
     void sendMd(bot, msg.chat.id, [`📂 *Import OPML*`, DIV, `Send an \.opml file to import your subscriptions\\.`].join("\n"));
   });
 
+  // ── Admin commands ───────────────────────────────────────────────────────
+  bot.onText(/^\/admin/, async (msg) => {
+    if (!rl(msg)) return;
+    if (!await isAdmin(String(msg.chat.id))) {
+      await bot.sendMessage(msg.chat.id, "🚫 ليس لديك صلاحية الوصول.");
+      return;
+    }
+    await cmdAdminPanel(bot, msg.chat.id);
+  });
+
+  bot.onText(/^\/approve (.+)/, async (msg, match) => {
+    if (!await isAdmin(String(msg.chat.id))) return;
+    const targetId = match?.[1]?.trim() ?? "";
+    await approveUser(bot, targetId, String(msg.chat.id));
+    await bot.sendMessage(msg.chat.id, `✅ تمت الموافقة على ${targetId}`);
+  });
+
+  bot.onText(/^\/block (\S+)(?:\s+(.+))?/, async (msg, match) => {
+    if (!await isAdmin(String(msg.chat.id))) return;
+    const targetId = match?.[1]?.trim() ?? "";
+    const reason   = match?.[2]?.trim() ?? "تم حظرك من قبل الأدمن";
+    await blockUser(bot, targetId, String(msg.chat.id), reason);
+    await bot.sendMessage(msg.chat.id, `🚷 تم حظر ${targetId}`);
+  });
+
+  bot.onText(/^\/unblock (.+)/, async (msg, match) => {
+    if (!await isAdmin(String(msg.chat.id))) return;
+    const targetId = match?.[1]?.trim() ?? "";
+    await unblockUser(bot, targetId, String(msg.chat.id));
+    await bot.sendMessage(msg.chat.id, `✅ تم فك حظر ${targetId}`);
+  });
+
+  bot.onText(/^\/promote (.+)/, async (msg, match) => {
+    if (!await isAdmin(String(msg.chat.id))) return;
+    const targetId = match?.[1]?.trim() ?? "";
+    await promoteUser(bot, targetId, String(msg.chat.id));
+    await bot.sendMessage(msg.chat.id, `⭐ تمت ترقية ${targetId}`);
+  });
+
+  bot.onText(/^\/demote (.+)/, async (msg, match) => {
+    if (!await isAdmin(String(msg.chat.id))) return;
+    const targetId = match?.[1]?.trim() ?? "";
+    await demoteUser(bot, targetId, String(msg.chat.id));
+    await bot.sendMessage(msg.chat.id, `⬇️ تم إلغاء صلاحيات ${targetId}`);
+  });
+
+  bot.onText(/^\/msg (\S+) (.+)/, async (msg, match) => {
+    if (!await isAdmin(String(msg.chat.id))) return;
+    const targetId = match?.[1]?.trim() ?? "";
+    const text     = match?.[2]?.trim() ?? "";
+    await bot.sendMessage(targetId, `📨 رسالة من الأدمن:\n\n${text}`, { parse_mode: "Markdown" });
+    await logAdminAction(String(msg.chat.id), "message", targetId, text.slice(0, 100));
+    await bot.sendMessage(msg.chat.id, `✅ تم إرسال الرسالة إلى ${targetId}`);
+  });
+
+  bot.onText(/^\/broadcast (.+)/, async (msg, match) => {
+    if (!await isAdmin(String(msg.chat.id))) return;
+    const text = match?.[1]?.trim() ?? "";
+    const loadMsg = await bot.sendMessage(msg.chat.id, "📢 جاري الإرسال...");
+    const result = await broadcastMessage(bot, text, String(msg.chat.id));
+    await bot.editMessageText(
+      `✅ تم الإرسال لـ ${result.sent} مستخدم\n❌ فشل: ${result.failed}`,
+      { chat_id: msg.chat.id, message_id: loadMsg.message_id }
+    ).catch(() => {});
+  });
+
+  bot.onText(/^\/users/, async (msg) => {
+    if (!await isAdmin(String(msg.chat.id))) return;
+    await cmdAdminUsers(bot, msg.chat.id);
+  });
+
+  bot.onText(/^\/logs/, async (msg) => {
+    if (!await isAdmin(String(msg.chat.id))) return;
+    await cmdAdminLogs(bot, msg.chat.id);
+  });
+
   // ── Document messages (OPML import) ─────────────────────────────────────
   bot.on("document", async (msg) => {
     if (!msg.document) return;
@@ -393,14 +488,53 @@ export function registerHandlers(bot: TelegramBot): void {
   });
 
   // ── Text messages ───────────────────────────────────────────────────────
-  bot.on("message", (msg) => {
+  bot.on("message", async (msg) => {
     if (!msg.text) return;
     if (msg.text.startsWith("/")) return;
     if (!checkRateLimit(msg.from?.id ?? 0)) return;
 
     const chatId = msg.chat.id;
     const text   = msg.text.trim();
-    const sess   = getSession(chatId);
+
+    // ── CAPTCHA check (must come before auth gate) ──────────────────────
+    const captchaHandled = await handleCaptchaAnswer(bot, msg);
+    if (captchaHandled) return;
+
+    // ── Auth gate ──────────────────────────────────────────────────────
+    const gateResult = await authGate(String(chatId));
+    if (gateResult === "block") {
+      const user = await db.select({ blockReason: usersTable.blockReason })
+        .from(usersTable).where(eq(usersTable.chatId, String(chatId))).limit(1);
+      await bot.sendMessage(chatId, `🚷 تم حظرك. السبب: ${user[0]?.blockReason ?? "غير محدد"}`);
+      return;
+    }
+    if (gateResult === "pending") {
+      // If user doesn't exist yet, allow them to interact (captcha already handled above)
+      const existing = await db.select().from(usersTable)
+        .where(eq(usersTable.chatId, String(chatId))).limit(1);
+      if (existing[0] && existing[0].captchaSolved) {
+        await bot.sendMessage(chatId, "⏳ حسابك في انتظار الموافقة من الأدمن.");
+        return;
+      }
+      if (existing[0] && !existing[0].captchaSolved) {
+        // They need to solve the captcha first — resend challenge
+        const { question } = (await import("./captcha.js")).getCaptchaChallenge();
+        await bot.sendMessage(chatId, question, { parse_mode: "MarkdownV2" });
+        return;
+      }
+      // Brand new user — register them
+      await getOrCreateUser(msg);
+      return;
+    }
+
+    const sess = getSession(chatId);
+
+    // Admin panel button routing
+    const adminCmd = ADMIN_PANEL_BUTTONS[text];
+    if (adminCmd && !sess.action && await isAdmin(String(chatId))) {
+      void routeAdminCommand(bot, chatId, adminCmd);
+      return;
+    }
 
     // Panel button press
     const panelCmd = PANEL_BUTTONS[text];
@@ -576,6 +710,14 @@ async function routeCallback(
   if (data.startsWith("ai_summary:"))      { void handleAiSummary(bot, chatId, +data.slice(11)); return; }
   if (data.startsWith("ai_detail:"))       { void handleAiDetail(bot, chatId, +data.slice(10)); return; }
   if (data.startsWith("transcript:"))      { void handleTranscriptPdf(bot, chatId, +data.slice(11)); return; }
+  if (data.startsWith("ep:deep:"))         { void handleEpDeepExplanation(bot, chatId, +data.slice(8)); return; }
+  if (data.startsWith("ep:questions:"))    { void handleEpQuestions(bot, chatId, +data.slice(13)); return; }
+  if (data.startsWith("questions_new:"))   { void handleEpQuestionsNew(bot, chatId, +data.slice(14)); return; }
+
+  // Admin callbacks
+  if (data.startsWith("admin_approve:")) { await handleAdminApprove(bot, chatId, query, data.slice(14)); return; }
+  if (data.startsWith("admin_reject:"))  { await handleAdminReject(bot, chatId, query, data.slice(13)); return; }
+  if (data.startsWith("admin_block:"))   { await handleAdminBlock(bot, chatId, query, data.slice(12)); return; }
 
   // Tags
   if (data.startsWith("tag_list:"))        { await showTagEpisodes(bot, chatId, msgId, +data.slice(9), 0); return; }
@@ -1565,7 +1707,7 @@ async function handleAiDetail(bot: TelegramBot, chatId: number, epId: number): P
   const feed = await db.select({ title: feedsTable.title }).from(feedsTable).where(eq(feedsTable.id, ep[0].feedId)).limit(1);
 
   await withSpinner(bot, chatId, "Generating detailed analysis", async () => {
-    const detail = await generateDetailedExplanation(ep[0].transcript!, feed[0]?.title ?? "", ep[0].title);
+    const detail = await generateDeepExplanation(ep[0].transcript!, feed[0]?.title ?? "", ep[0].title);
     await sendLongText(bot, chatId, detail);
   });
 }
@@ -1966,5 +2108,239 @@ async function handleVoiceSearch(bot: TelegramBot, msg: TelegramBot.Message): Pr
 
     await sendMd(bot, chatId, `🎙 *Heard:* ${esc(trunc(transcript, 30))}\n${DIV}\nSearching podcasts…`);
     await handleEpisodeSearch(bot, chatId, transcript);
+  });
+}
+
+// ─── ADMIN ROUTING ────────────────────────────────────────────────────────────
+
+async function routeAdminCommand(bot: TelegramBot, chatId: number, cmd: string): Promise<void> {
+  switch (cmd) {
+    case "admin_users":  await cmdAdminUsers(bot, chatId);  break;
+    case "admin_stats":  await cmdAdminPanel(bot, chatId);  break;
+    case "admin_logs":   await cmdAdminLogs(bot, chatId);   break;
+    case "main_menu":
+      await sendMd(bot, chatId, `🎙 *iCast*\n${DIV}\nUse the keyboard below\\.`, {
+        reply_markup: { keyboard: MAIN_KEYBOARD, resize_keyboard: true, is_persistent: true },
+      });
+      break;
+  }
+}
+
+// ─── ADMIN PANEL ──────────────────────────────────────────────────────────────
+
+async function cmdAdminPanel(bot: TelegramBot, chatId: number): Promise<void> {
+  const [totalRows] = await db.select({ c: count() }).from(usersTable);
+  const [pendingRows] = await db.select({ c: count() }).from(usersTable)
+    .where(eq(usersTable.role, "pending"));
+  const [blockedRows] = await db.select({ c: count() }).from(usersTable)
+    .where(eq(usersTable.isBlocked, true));
+
+  const text = adminPanelMsg({
+    totalUsers:   Number(totalRows.c),
+    pendingUsers: Number(pendingRows.c),
+    blockedUsers: Number(blockedRows.c),
+  });
+
+  await sendMd(bot, chatId, text, {
+    reply_markup: {
+      keyboard: ADMIN_KEYBOARD,
+      resize_keyboard: true,
+      is_persistent: true,
+    },
+  });
+}
+
+async function cmdAdminUsers(bot: TelegramBot, chatId: number): Promise<void> {
+  const users = await db.select().from(usersTable)
+    .orderBy(desc(usersTable.joinedAt)).limit(20);
+
+  if (!users.length) {
+    await sendMd(bot, chatId, `👥 *لا يوجد مستخدمون بعد*`);
+    return;
+  }
+
+  const lines = [
+    `👥 *المستخدمون \\(${users.length}\\)*`,
+    DIV,
+  ];
+  for (const u of users) {
+    const icon = u.isBlocked ? "🚷" : u.role === "admin" || u.role === "superadmin" ? "⭐" : u.role === "user" ? "✅" : "⏳";
+    const name = esc(trunc(u.firstName ?? u.username ?? u.chatId, 20));
+    lines.push(`${icon} ${name} \\— \`${u.chatId}\` \\(${esc(u.role ?? "??")}\\)`);
+  }
+
+  // Split into chunks if needed
+  for (const chunk of splitLong(lines.join("\n"))) {
+    await sendMd(bot, chatId, chunk);
+  }
+}
+
+async function cmdAdminLogs(bot: TelegramBot, chatId: number): Promise<void> {
+  const logs = await db.select().from(adminLogsTable)
+    .orderBy(desc(adminLogsTable.createdAt)).limit(20);
+
+  if (!logs.length) {
+    await sendMd(bot, chatId, `📋 *لا توجد سجلات بعد*`);
+    return;
+  }
+
+  const lines = [
+    `📋 *آخر ${logs.length} نشاط*`,
+    DIV,
+  ];
+  for (const l of logs) {
+    const date = l.createdAt ? fmtDate(l.createdAt) : "?";
+    lines.push(`• ${esc(l.action)} ← \`${esc(l.adminChatId)}\`` +
+      (l.targetChatId ? ` → \`${esc(l.targetChatId)}\`` : "") +
+      ` \\(${esc(date)}\\)`);
+  }
+
+  for (const chunk of splitLong(lines.join("\n"))) {
+    await sendMd(bot, chatId, chunk);
+  }
+}
+
+// ─── ADMIN CALLBACK HANDLERS ──────────────────────────────────────────────────
+
+async function handleAdminApprove(
+  bot: TelegramBot, chatId: number,
+  query: TelegramBot.CallbackQuery, targetChatId: string
+): Promise<void> {
+  await approveUser(bot, targetChatId, String(chatId));
+  await bot.answerCallbackQuery(query.id, { text: `✅ تمت الموافقة` });
+  if (query.message) {
+    await bot.editMessageText(
+      `✅ تمت الموافقة على \`${targetChatId}\``,
+      { chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown" }
+    ).catch(() => {});
+  }
+}
+
+async function handleAdminReject(
+  bot: TelegramBot, chatId: number,
+  query: TelegramBot.CallbackQuery, targetChatId: string
+): Promise<void> {
+  await rejectUser(bot, targetChatId, String(chatId));
+  await bot.answerCallbackQuery(query.id, { text: `❌ تم الرفض` });
+  if (query.message) {
+    await bot.editMessageText(
+      `❌ تم رفض \`${targetChatId}\``,
+      { chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown" }
+    ).catch(() => {});
+  }
+}
+
+async function handleAdminBlock(
+  bot: TelegramBot, chatId: number,
+  query: TelegramBot.CallbackQuery, targetChatId: string
+): Promise<void> {
+  await blockUser(bot, targetChatId, String(chatId), "تم حظرك من قبل الأدمن");
+  await bot.answerCallbackQuery(query.id, { text: `🚷 تم الحظر` });
+  if (query.message) {
+    await bot.editMessageText(
+      `🚷 تم حظر \`${targetChatId}\``,
+      { chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown" }
+    ).catch(() => {});
+  }
+}
+
+// ─── HARVARD PROFESSOR DEEP EXPLANATION ───────────────────────────────────────
+
+async function handleEpDeepExplanation(bot: TelegramBot, chatId: number, epId: number): Promise<void> {
+  if (!hasGroqKey()) { await sendMd(bot, chatId, `⚠️ AI is not configured\\.`); return; }
+
+  const ep = await db.select().from(episodesTable).where(eq(episodesTable.id, epId)).limit(1);
+  if (!ep[0]) return;
+
+  const text = ep[0].transcript ?? ep[0].description ?? "";
+  if (!text) {
+    await sendMd(bot, chatId, softError("لا يوجد محتوى للتحليل", "قم بتفريغ الحلقة أولاً\\."));
+    return;
+  }
+
+  const feed = await db.select({ title: feedsTable.title }).from(feedsTable)
+    .where(eq(feedsTable.id, ep[0].feedId)).limit(1);
+
+  await withSpinner(bot, chatId, "🎓 Harvard Professor analyzing", async () => {
+    const explanation = await generateDeepExplanation(
+      text, feed[0]?.title ?? "", ep[0].title
+    );
+    const chunks = splitLong(explanation, 4000);
+    for (const chunk of chunks) {
+      await bot.sendMessage(chatId, chunk);
+    }
+    await sendMd(bot, chatId, `💡 *انتهى الشرح العميق*`, {
+      reply_markup: { inline_keyboard: [
+        [{ text: "❓ 100 سؤال", callback_data: `ep:questions:${epId}` }],
+        [{ text: "◀️ رجوع للحلقة", callback_data: `ep:${epId}` }],
+        homeRow(),
+      ]},
+    });
+  });
+}
+
+// ─── 100 CRITICAL THINKING QUESTIONS ─────────────────────────────────────────
+
+async function handleEpQuestions(bot: TelegramBot, chatId: number, epId: number): Promise<void> {
+  if (!hasGroqKey()) { await sendMd(bot, chatId, `⚠️ AI is not configured\\.`); return; }
+
+  const ep = await db.select().from(episodesTable).where(eq(episodesTable.id, epId)).limit(1);
+  if (!ep[0]) return;
+
+  const text = ep[0].transcript ?? ep[0].description ?? "";
+  if (!text) {
+    await sendMd(bot, chatId, softError("لا يوجد محتوى للأسئلة", "قم بتفريغ الحلقة أولاً\\."));
+    return;
+  }
+
+  const feed = await db.select({ title: feedsTable.title }).from(feedsTable)
+    .where(eq(feedsTable.id, ep[0].feedId)).limit(1);
+
+  await withSpinner(bot, chatId, "❓ Generating critical questions", async () => {
+    const questions = await generateCriticalQuestions(
+      text, feed[0]?.title ?? "", ep[0].title
+    );
+    const chunks = splitLong(questions, 4000);
+    for (const chunk of chunks) {
+      await bot.sendMessage(chatId, chunk);
+    }
+    await sendMd(bot, chatId, `❓ *تم توليد الأسئلة\\!*`, {
+      reply_markup: { inline_keyboard: [
+        [{ text: "🎲 100 سؤال جديد", callback_data: `questions_new:${epId}` }],
+        [{ text: "💡 شرح عميق",      callback_data: `ep:deep:${epId}` }],
+        [{ text: "◀️ رجوع للحلقة",   callback_data: `ep:${epId}` }],
+        homeRow(),
+      ]},
+    });
+  });
+}
+
+async function handleEpQuestionsNew(bot: TelegramBot, chatId: number, epId: number): Promise<void> {
+  if (!hasGroqKey()) { await sendMd(bot, chatId, `⚠️ AI is not configured\\.`); return; }
+
+  const ep = await db.select().from(episodesTable).where(eq(episodesTable.id, epId)).limit(1);
+  if (!ep[0]) return;
+
+  const text = ep[0].transcript ?? ep[0].description ?? "";
+  if (!text) return;
+
+  const feed = await db.select({ title: feedsTable.title }).from(feedsTable)
+    .where(eq(feedsTable.id, ep[0].feedId)).limit(1);
+
+  await withSpinner(bot, chatId, "🎲 Generating NEW questions", async () => {
+    const questions = await generateCriticalQuestions(
+      text, feed[0]?.title ?? "", ep[0].title, Date.now()
+    );
+    const chunks = splitLong(questions, 4000);
+    for (const chunk of chunks) {
+      await bot.sendMessage(chatId, chunk);
+    }
+    await sendMd(bot, chatId, `🎲 *تم توليد 100 سؤال جديدة\\!*`, {
+      reply_markup: { inline_keyboard: [
+        [{ text: "🎲 100 سؤال جديد", callback_data: `questions_new:${epId}` }],
+        [{ text: "◀️ رجوع للحلقة",   callback_data: `ep:${epId}` }],
+        homeRow(),
+      ]},
+    });
   });
 }

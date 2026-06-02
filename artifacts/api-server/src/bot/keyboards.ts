@@ -35,6 +35,24 @@ export const HOME_BTN: TelegramBot.InlineKeyboardButton = {
 
 export const homeRow = (): IRow => [HOME_BTN];
 
+// ─── Admin keyboard ───────────────────────────────────────────────────────────
+
+export const ADMIN_KEYBOARD: TelegramBot.KeyboardButton[][] = [
+  [{ text: "👥 المستخدمون" },  { text: "📊 الإحصائيات" }],
+  [{ text: "📨 رسالة فردية" }, { text: "📢 بث جماعي" }],
+  [{ text: "🚷 حظر" },         { text: "✅ فك حظر" }],
+  [{ text: "⭐ ترقية" },       { text: "⬇️ إلغاء ترقية" }],
+  [{ text: "📋 السجلات" },     { text: "🏠 رجوع" }],
+];
+
+export const ADMIN_PANEL_BUTTONS: Record<string, string> = {
+  "👥 المستخدمون":  "admin_users",
+  "📊 الإحصائيات": "admin_stats",
+  "📢 بث جماعي":   "admin_broadcast",
+  "📋 السجلات":    "admin_logs",
+  "🏠 رجوع":       "main_menu",
+};
+
 // ─── Feed actions ─────────────────────────────────────────────────────────────
 
 export function feedActions(feedId: number): IKB {
@@ -51,7 +69,7 @@ export function feedActions(feedId: number): IKB {
   ];
 }
 
-// ─── Episode actions ──────────────────────────────────────────────────────────
+// ─── Episode actions (full set) ───────────────────────────────────────────────
 
 export function episodeActions(
   epId: number,
@@ -66,32 +84,39 @@ export function episodeActions(
   const { isFav, isQueued, hasTranscript, progress = 0, isPlayed } = opts;
   const kb: IKB = [
     [
-      { text: isFav    ? "❤️ Favourited" : "🤍 Favourite", callback_data: `fav:${epId}` },
-      { text: isQueued ? "✅ In Queue"   : "⏭ Add to Queue", callback_data: `queue_add:${epId}` },
+      { text: "📥 تحميل الحلقة",    callback_data: `download:${epId}` },
+      { text: "📄 تحميل Transcript", callback_data: `transcript:${epId}` },
     ],
     [
-      { text: isPlayed ? "✅ Played"     : "🔲 Mark Played", callback_data: `listened:${epId}` },
-      { text: "⬇️ Download",            callback_data: `download:${epId}` },
+      { text: "💡 شرح عميق",    callback_data: `ep:deep:${epId}` },
+      { text: "❓ 100 سؤال",    callback_data: `ep:questions:${epId}` },
+    ],
+    [
+      { text: isFav    ? "❤️ مفضلة ✓"   : "🤍 مفضلة",    callback_data: `fav:${epId}` },
+      { text: isQueued ? "✅ في القائمة" : "⏭ أضف للقائمة", callback_data: `queue_add:${epId}` },
+    ],
+    [
+      { text: isPlayed ? "✅ تم الاستماع" : "🔲 مشاهدة",   callback_data: `listened:${epId}` },
+      { text: "🏷 تصنيفات",                                  callback_data: `tag_pick:${epId}` },
     ],
     hasTranscript
       ? [
-          { text: "📝 Transcript", callback_data: `transcript:${epId}` },
-          { text: "✨ Summary",    callback_data: `ai_summary:${epId}` },
+          { text: "📝 النص",        callback_data: `transcript:${epId}` },
+          { text: "✨ ملخص",        callback_data: `ai_summary:${epId}` },
         ]
       : [
-          { text: "✨ Generate Summary", callback_data: `ep:summarize:${epId}` },
-          { text: "📝 Transcribe AI",    callback_data: `ep:transcribe:${epId}` },
+          { text: "✨ توليد ملخص",  callback_data: `ep:summarize:${epId}` },
+          { text: "📝 تفريغ نصي",   callback_data: `ep:transcribe:${epId}` },
         ],
     [
-      { text: "📝 Add Note",  callback_data: `ep:addNote:${epId}` },
-      { text: "🔗 Share",     callback_data: `ep:share:${epId}` },
+      { text: "📝 إضافة ملاحظة", callback_data: `ep:addNote:${epId}` },
+      { text: "🔗 مشاركة",       callback_data: `ep:share:${epId}` },
     ],
     [
-      { text: "🏷 Tags",      callback_data: `tag_pick:${epId}` },
-      { text: "🤖 Ask AI",   callback_data: `ep:ask:${epId}` },
+      { text: "🤖 Ask AI",       callback_data: `ep:ask:${epId}` },
+      { text: "◀️ رجوع",        callback_data: "cmd:latest" },
     ],
-    [{ text: "🔙 Back", callback_data: "cmd:latest" }],
-    homeRow(),
+    [{ text: "🏠 الرئيسية",     callback_data: "menu" }],
   ];
   return kb;
 }

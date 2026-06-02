@@ -111,6 +111,44 @@ export const ratingsTable = pgTable("ratings", {
   createdAt:  timestamp("created_at").defaultNow(),
 });
 
+// ─── Users (Auth & Access Control) ───────────────────────────────────────────
+
+export const usersTable = pgTable("users", {
+  id:              serial("id").primaryKey(),
+  chatId:          text("chat_id").unique().notNull(),
+  username:        text("username"),
+  firstName:       text("first_name"),
+  lastName:        text("last_name"),
+  role:            text("role").default("pending"),   // pending | user | admin | superadmin
+  isBlocked:       boolean("is_blocked").default(false),
+  blockReason:     text("block_reason"),
+  captchaAttempts: integer("captcha_attempts").default(0),
+  captchaSolved:   boolean("captcha_solved").default(false),
+  joinedAt:        timestamp("joined_at").defaultNow(),
+  lastActiveAt:    timestamp("last_active_at").defaultNow(),
+});
+
+// ─── Admin Logs ───────────────────────────────────────────────────────────────
+
+export const adminLogsTable = pgTable("admin_logs", {
+  id:            serial("id").primaryKey(),
+  adminChatId:   text("admin_chat_id").notNull(),
+  targetChatId:  text("target_chat_id"),
+  action:        text("action").notNull(),   // approve | block | unblock | promote | demote | message | broadcast
+  details:       text("details"),
+  createdAt:     timestamp("created_at").defaultNow(),
+});
+
+// ─── User Activity ────────────────────────────────────────────────────────────
+
+export const userActivityTable = pgTable("user_activity", {
+  id:         serial("id").primaryKey(),
+  chatId:     text("chat_id").notNull(),
+  action:     text("action").notNull(),
+  details:    text("details"),
+  createdAt:  timestamp("created_at").defaultNow(),
+});
+
 // ─── Zod schemas ──────────────────────────────────────────────────────────────
 
 export const insertFeedSchema        = createInsertSchema(feedsTable).omit({ id: true, createdAt: true });
@@ -121,6 +159,9 @@ export const insertTagSchema         = createInsertSchema(tagsTable).omit({ id: 
 export const insertEpisodeTagSchema  = createInsertSchema(episodeTagsTable).omit({ id: true, createdAt: true });
 export const insertBookmarkSchema    = createInsertSchema(bookmarksTable).omit({ id: true, createdAt: true });
 export const insertRatingSchema      = createInsertSchema(ratingsTable).omit({ id: true, createdAt: true });
+export const insertUserSchema        = createInsertSchema(usersTable).omit({ id: true, joinedAt: true, lastActiveAt: true });
+export const insertAdminLogSchema    = createInsertSchema(adminLogsTable).omit({ id: true, createdAt: true });
+export const insertUserActivitySchema = createInsertSchema(userActivityTable).omit({ id: true, createdAt: true });
 
 // ─── TS Types ─────────────────────────────────────────────────────────────────
 
@@ -133,6 +174,10 @@ export type EpisodeTag    = typeof episodeTagsTable.$inferSelect;
 export type UserPrefs     = typeof userPrefsTable.$inferSelect;
 export type Bookmark      = typeof bookmarksTable.$inferSelect;
 export type Rating        = typeof ratingsTable.$inferSelect;
+export type User          = typeof usersTable.$inferSelect;
+export type AdminLog      = typeof adminLogsTable.$inferSelect;
+export type UserActivity  = typeof userActivityTable.$inferSelect;
 
 export type InsertFeed    = z.infer<typeof insertFeedSchema>;
 export type InsertEpisode = z.infer<typeof insertEpisodeSchema>;
+export type InsertUser    = z.infer<typeof insertUserSchema>;
