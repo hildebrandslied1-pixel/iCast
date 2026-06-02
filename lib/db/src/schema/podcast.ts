@@ -23,6 +23,8 @@ export const episodesTable = pgTable("episodes", {
   duration: text("duration"),
   listened: boolean("listened").default(false),
   progress: real("progress").default(0),
+  transcript: text("transcript"),
+  transcriptAt: timestamp("transcript_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -41,14 +43,14 @@ export const queueTable = pgTable("queue", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const insertFeedSchema = createInsertSchema(feedsTable).omit({ id: true, createdAt: true });
+export const insertFeedSchema    = createInsertSchema(feedsTable).omit({ id: true, createdAt: true });
 export const insertEpisodeSchema = createInsertSchema(episodesTable).omit({ id: true, createdAt: true });
 export const insertFavoriteSchema = createInsertSchema(favoritesTable).omit({ id: true, createdAt: true });
-export const insertQueueSchema = createInsertSchema(queueTable).omit({ id: true, createdAt: true });
+export const insertQueueSchema   = createInsertSchema(queueTable).omit({ id: true, createdAt: true });
 
-export type Feed = typeof feedsTable.$inferSelect;
-export type Episode = typeof episodesTable.$inferSelect;
-export type Favorite = typeof favoritesTable.$inferSelect;
-export type Queue = typeof queueTable.$inferSelect;
-export type InsertFeed = z.infer<typeof insertFeedSchema>;
-export type InsertEpisode = z.infer<typeof insertEpisodeSchema>;
+export type Feed           = typeof feedsTable.$inferSelect;
+export type Episode        = typeof episodesTable.$inferSelect;
+export type Favorite       = typeof favoritesTable.$inferSelect;
+export type Queue          = typeof queueTable.$inferSelect;
+export type InsertFeed     = z.infer<typeof insertFeedSchema>;
+export type InsertEpisode  = z.infer<typeof insertEpisodeSchema>;

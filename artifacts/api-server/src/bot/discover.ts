@@ -1,5 +1,9 @@
-// iTunes Store country codes → display names
-// Full list of countries that support Apple Podcasts charts
+/**
+ * iTunes Store discovery — top charts + search + RSS resolution.
+ * Every country fetch uses a two-tier fallback and 12-second timeout.
+ */
+
+// Full list of countries with confirmed Apple Podcasts presence
 export const ALL_COUNTRIES: [string, string][] = [
   ["us", "🇺🇸 United States"],
   ["gb", "🇬🇧 United Kingdom"],
@@ -35,7 +39,6 @@ export const ALL_COUNTRIES: [string, string][] = [
   ["co", "🇨🇴 Colombia"],
   ["jp", "🇯🇵 Japan"],
   ["kr", "🇰🇷 South Korea"],
-  ["cn", "🇨🇳 China"],
   ["hk", "🇭🇰 Hong Kong"],
   ["tw", "🇹🇼 Taiwan"],
   ["sg", "🇸🇬 Singapore"],
@@ -45,15 +48,20 @@ export const ALL_COUNTRIES: [string, string][] = [
   ["th", "🇹🇭 Thailand"],
   ["vn", "🇻🇳 Vietnam"],
   ["eg", "🇪🇬 Egypt"],
+  ["sa", "🇸🇦 Saudi Arabia"],
+  ["ae", "🇦🇪 UAE"],
+  ["kw", "🇰🇼 Kuwait"],
+  ["qa", "🇶🇦 Qatar"],
+  ["bh", "🇧🇭 Bahrain"],
+  ["om", "🇴🇲 Oman"],
+  ["il", "🇮🇱 Israel"],
   ["ng", "🇳🇬 Nigeria"],
   ["ke", "🇰🇪 Kenya"],
   ["gh", "🇬🇭 Ghana"],
-  ["sa", "🇸🇦 Saudi Arabia"],
-  ["ae", "🇦🇪 UAE"],
-  ["il", "🇮🇱 Israel"],
+  ["ma", "🇲🇦 Morocco"],
   ["pk", "🇵🇰 Pakistan"],
-  ["bd", "🇧🇩 Bangladesh"],
   ["lk", "🇱🇰 Sri Lanka"],
+  ["bd", "🇧🇩 Bangladesh"],
   ["gr", "🇬🇷 Greece"],
   ["ua", "🇺🇦 Ukraine"],
   ["hr", "🇭🇷 Croatia"],
@@ -63,16 +71,27 @@ export const ALL_COUNTRIES: [string, string][] = [
   ["lt", "🇱🇹 Lithuania"],
   ["lv", "🇱🇻 Latvia"],
   ["ee", "🇪🇪 Estonia"],
+  ["mx", "🇲🇽 Mexico"],
+  ["pe", "🇵🇪 Peru"],
+  ["ve", "🇻🇪 Venezuela"],
 ];
 
 export const COUNTRIES_PAGE_SIZE = 20;
 
 export function getCountriesPage(page: number): [string, string][] {
-  return ALL_COUNTRIES.slice(page * COUNTRIES_PAGE_SIZE, (page + 1) * COUNTRIES_PAGE_SIZE);
+  // Deduplicate (mx appears twice in the source above)
+  const seen = new Set<string>();
+  const unique = ALL_COUNTRIES.filter(([code]) => {
+    if (seen.has(code)) return false;
+    seen.add(code);
+    return true;
+  });
+  return unique.slice(page * COUNTRIES_PAGE_SIZE, (page + 1) * COUNTRIES_PAGE_SIZE);
 }
 
 export function totalCountryPages(): number {
-  return Math.ceil(ALL_COUNTRIES.length / COUNTRIES_PAGE_SIZE);
+  const unique = new Set(ALL_COUNTRIES.map(([c]) => c));
+  return Math.ceil(unique.size / COUNTRIES_PAGE_SIZE);
 }
 
 export function findCountry(code: string): string | undefined {
@@ -87,60 +106,110 @@ export interface DiscoveredPodcast {
   feedUrl?: string;
 }
 
-// ─── Top Charts (iTunes RSS — working endpoint) ───────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────
 
-export async function fetchTopCharts(country: string, limit = 25): Promise<DiscoveredPodcast[]> {
-  const url = `https://itunes.apple.com/${country}/rss/toppodcasts/limit=${limit}/json`;
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" },
-  });
-  if (!res.ok) throw new Error(`iTunes Charts returned ${res.status} for country "${country}"`);
+async function fetchWithTimeout(url: string, timeoutMs = 12_000): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" },
+    });
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
-  const json = await res.json() as any;
+async function fetchWithRetry(url: string, retries = 2): Promise<any> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetchWithTimeout(url);
+      if (!res.ok) {
+        if (res.status === 403 || res.status === 404) {
+          throw new Error(`HTTP_${res.status}`);  // no point retrying
+        }
+        throw new Error(`HTTP ${res.status}`);
+      }
+      return await res.json();
+    } catch (err: any) {
+      const noRetry = err?.message?.startsWith("HTTP_");
+      if (attempt >= retries || noRetry) throw err;
+      await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+    }
+  }
+}
+
+// ─── Top Charts ────────────────────────────────────────────────────────────
+
+export async function fetchTopCharts(country: string, limit = 100): Promise<DiscoveredPodcast[]> {
+  const code = country.toLowerCase();
+
+  // Primary endpoint
+  const primaryUrl = `https://itunes.apple.com/${code}/rss/toppodcasts/limit=${limit}/json`;
+  // Fallback endpoint (explicit content)
+  const fallbackUrl = `https://itunes.apple.com/${code}/rss/topaudiopodcasts/limit=${Math.min(limit, 100)}/json`;
+
+  let json: any;
+  try {
+    json = await fetchWithRetry(primaryUrl);
+  } catch (primaryErr: any) {
+    // Try fallback before giving up
+    try {
+      json = await fetchWithRetry(fallbackUrl);
+    } catch {
+      throw new Error(
+        primaryErr?.message?.includes("HTTP_404") || primaryErr?.message?.includes("HTTP_403")
+          ? `Apple Podcasts charts are not available for "${findCountry(code) ?? code.toUpperCase()}". Try a neighbouring country.`
+          : `Failed to load charts: ${primaryErr?.message ?? primaryErr}`
+      );
+    }
+  }
+
   const entries: any[] = json?.feed?.entry ?? [];
+  if (!entries.length) {
+    throw new Error(`No chart data returned for "${findCountry(code) ?? code.toUpperCase()}". This country may not have an Apple Podcasts presence.`);
+  }
 
   return entries.map((e: any) => ({
-    id: e["id"]?.attributes?.["im:id"] ?? "",
-    name: e["im:name"]?.label ?? "Unknown",
+    id:     e["id"]?.attributes?.["im:id"] ?? "",
+    name:   e["im:name"]?.label ?? "Unknown",
     artist: e["im:artist"]?.label ?? "Unknown",
-    genre: e["category"]?.attributes?.label ?? "",
+    genre:  e["category"]?.attributes?.label ?? "",
   }));
 }
 
-// ─── Search (iTunes Search API — working endpoint) ────────────────────────
+// ─── Search ────────────────────────────────────────────────────────────────
 
 export async function searchPodcasts(
   term: string,
   country = "us",
   limit = 20
 ): Promise<DiscoveredPodcast[]> {
-  const q = encodeURIComponent(term);
+  const q   = encodeURIComponent(term);
   const url = `https://itunes.apple.com/search?term=${q}&media=podcast&entity=podcast&country=${country}&limit=${limit}&lang=en_us`;
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" },
-  });
-  if (!res.ok) throw new Error(`iTunes Search returned ${res.status}`);
 
-  const json = await res.json() as any;
+  const json = await fetchWithRetry(url);
   const results: any[] = json?.results ?? [];
 
   return results.map((r: any) => ({
-    id: String(r.collectionId ?? r.trackId ?? ""),
-    name: r.collectionName ?? r.trackName ?? "Unknown",
-    artist: r.artistName ?? "Unknown",
-    genre: r.primaryGenreName ?? "",
+    id:      String(r.collectionId ?? r.trackId ?? ""),
+    name:    r.collectionName ?? r.trackName ?? "Unknown",
+    artist:  r.artistName ?? "Unknown",
+    genre:   r.primaryGenreName ?? "",
     feedUrl: r.feedUrl ?? undefined,
   }));
 }
 
-// ─── Resolve RSS feed from iTunes ID ─────────────────────────────────────
+// ─── Resolve RSS feed from iTunes ID ──────────────────────────────────────
 
 export async function resolveRssFeed(itunesId: string): Promise<string | null> {
   const url = `https://itunes.apple.com/lookup?id=${itunesId}&entity=podcast`;
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0" },
-  });
-  if (!res.ok) return null;
-  const json = await res.json() as any;
-  return json?.results?.[0]?.feedUrl ?? null;
+  try {
+    const json = await fetchWithRetry(url);
+    return json?.results?.[0]?.feedUrl ?? null;
+  } catch {
+    return null;
+  }
 }

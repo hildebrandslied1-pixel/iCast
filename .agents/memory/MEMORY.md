@@ -1,0 +1,4 @@
+- [Bot architecture](bot-architecture.md) — key decisions: polling mode, ESM imports (.js), @swc/helpers required by pdfkit/fontkit
+- [Transcription chunking](transcription.md) — chunked Whisper via HTTP Range requests; 23MB per chunk; retry logic; never stops mid-episode
+- [iTunes Charts API](itunes-api.md) — working endpoint format and fallback strategy for unsupported countries
+- [Railway deployment](railway-deploy.md) — Dockerfile + railway.json; PORT env required; healthcheck at /api/healthz
