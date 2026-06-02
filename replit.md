@@ -1,65 +1,68 @@
-# بودكاست بوت — Podcast Telegram Bot
+# iCast
 
-بوت تيليغرام متكامل لإدارة البودكاست — إضافة، تصفح، وتتبع الحلقات مباشرة من تيليغرام.
+A Telegram bot for podcast management, powered by Groq AI.
 
-## Run & Operate
+## Features
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server + Telegram bot (port 8080)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
-- Required secret: `TELEGRAM_BOT_TOKEN` — Telegram bot token from @BotFather
+- 📻 Subscribe to any RSS/Atom podcast feed
+- 🆕 Browse and play the latest episodes
+- 🌍 Discover trending podcasts by country (iTunes charts)
+- 🔍 Search episodes and transcripts
+- 🧠 AI transcription (Groq Whisper) and summaries (Llama)
+- 💬 Chat with episode content using AI
+- 📝 Notes & bookmarks per episode
+- ❤️ Favourites and playback queue
+- 🏷 Tags/folders for organising episodes
+- 📊 Listening statistics with weekly chart
+- ⚙️ User preferences (auto-download, notifications, language)
+- 📂 OPML import/export
+- 🎵 Smart playlist generation
+- 🎙 Voice search
+- ⭐ Podcast ratings
 
-## Stack
+## Required Environment Variables
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5 + Telegram Bot (node-telegram-bot-api, polling mode)
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- RSS: rss-parser (podcast feed fetching)
-- Build: esbuild (CJS bundle)
+| Variable | Description |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather |
+| `DATABASE_URL` | PostgreSQL connection string |
+| `GROQ_API_KEY` | Groq API key (free at console.groq.com) |
+| `PORT` | Server port (set automatically by Replit) |
 
-## Where things live
+## Commands
 
-- `artifacts/api-server/src/bot/` — Telegram bot code
-  - `index.ts` — bot startup & polling
-  - `handlers.ts` — all command/callback handlers
-  - `formatter.ts` — message formatting utilities (progress bars, cards, dividers)
-  - `rss.ts` — RSS/Atom feed fetching
-- `lib/db/src/schema/podcast.ts` — DB schema (feeds, episodes, favorites, queue)
+```
+/start      — Start here
+/feeds      — My subscriptions
+/latest     — Latest episodes
+/add        — Add podcast via RSS
+/search     — Search episodes
+/queue      — Playback queue
+/favourites — Favourited episodes
+/stats      — My statistics
+/discover   — Discover podcasts
+/resume     — Continue listening
+/refresh    — Refresh all feeds
+/settings   — Preferences
+/notes      — My notes
+/tsearch    — Search transcripts
+/ask        — Ask AI about episode
+/playlist   — Build playlist
+/import     — Import OPML
+/help       — Help
+/about      — About
+```
 
-## Architecture decisions
+## Development
 
-- Bot uses long-polling (not webhook) for simplicity in dev; works in production too
-- All messages use Markdown parse_mode with fixed-width dividers for consistent Telegram width
-- Sessions stored in-memory Map for multi-step flows (add RSS, search)
-- Episode pagination: 5 per page with inline keyboard navigation
-- Each user identified by Telegram chatId (stored as text in DB)
+```bash
+pnpm dev     # start the API server
+pnpm build   # build for production
+```
 
-## Product
+## User Preferences
 
-- `/start` / `/help` — welcome & commands
-- `/add` — add podcast via RSS/Atom URL (or just send the URL directly)
-- `/feeds` — browse all subscribed podcasts, tap to see episodes
-- `/latest` — latest 8 episodes across all feeds
-- `/queue` — playback queue management
-- `/favorites` — favorited episodes
-- `/search` — search episodes by title
-- `/stats` — listening stats with progress bar
-- `/refresh` — refresh all feeds for new episodes
-
-## User preferences
-
-- Arabic UI with artful Telegram formatting (dividers, progress bars, emoji badges)
-- Messages formatted for narrow Telegram width (~40 chars per line)
-
-## Gotchas
-
-- Run `pnpm --filter @workspace/db run push` after any schema changes
-- Bot starts automatically when the API server starts
-- RSS feeds are limited to 50 episodes per fetch to avoid DB bloat
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- All messages in British English
+- Mobile-first message design (lines ≤ 32 chars)
+- MarkdownV2 formatting throughout
+- Single divider style: ──────────────

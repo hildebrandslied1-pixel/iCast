@@ -1,21 +1,13 @@
 /**
- * Audio downloader — sends podcast audio directly to Telegram as an audio
- * message (plays inline with Telegram's built-in player).
- *
- * Strategy:
- *  1. Probe file size with HEAD request
- *  2. Download the full file (all Range chunks) into memory
- *  3. Concatenate all chunks into one Buffer (valid for MP3 streams)
- *  4. If total ≤ 49 MB → send as ONE sendAudio (inline player, best UX)
- *  5. If total > 49 MB → send each 49 MB chunk as separate sendAudio part
- *
- * This guarantees Telegram shows a native audio player, not a download link.
+ * downloader.ts — Sends podcast audio to Telegram as an audio message.
+ * Checks file size before downloading; splits large files into ≤49 MB parts.
  */
 
 import TelegramBot from "node-telegram-bot-api";
-import { fmt, divider, truncate } from "./formatter.js";
+import { trunc, esc } from "./formatter.js";
 
 const MAX_TG_BYTES = 49 * 1024 * 1024; // 49 MB
+const MAX_FILE_MB  = 200;               // Refuse files larger than 200 MB
 
 export interface DownloadOptions {
   chatId: number;
@@ -36,9 +28,14 @@ export async function sendEpisodeAudio(opts: DownloadOptions): Promise<void> {
     const head = await fetch(audioUrl, {
       method: "HEAD",
       headers: { "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(15_000),
     });
     contentLength = parseInt(head.headers.get("content-length") ?? "0", 10);
   } catch { /* ignore */ }
+
+  if (contentLength > MAX_FILE_MB * 1024 * 1024) {
+    throw new Error(`File too large (${mb(contentLength)} MB). Maximum is ${MAX_FILE_MB} MB.`);
+  }
 
   const ext      = (audioUrl.split("?")[0].match(/\.(mp3|m4a|ogg|wav|aac|flac)$/i)?.[1] ?? "mp3").toLowerCase();
   const filename = sanitise(episodeTitle) + "." + ext;
@@ -48,56 +45,44 @@ export async function sendEpisodeAudio(opts: DownloadOptions): Promise<void> {
                  : ext === "aac" ? "audio/aac"
                  : "audio/mpeg";
 
-  // ── Download all data ──────────────────────────────────────────────────────
+  // ── Download ────────────────────────────────────────────────────────────────
   const allChunks: Buffer[] = [];
-  let downloaded = 0;
 
   if (contentLength > 0) {
-    // Range-based download so we can report progress
     const numParts = Math.ceil(contentLength / MAX_TG_BYTES);
     for (let i = 0; i < numParts; i++) {
       const start = i * MAX_TG_BYTES;
       const end   = Math.min((i + 1) * MAX_TG_BYTES - 1, contentLength - 1);
       await onProgress?.(`⏳ Downloading${numParts > 1 ? ` part ${i + 1}/${numParts}` : ""}… (${mb(end + 1)} MB)`);
-      const buf = await downloadRange(audioUrl, start, end);
-      allChunks.push(buf);
-      downloaded += buf.length;
+      allChunks.push(await downloadRange(audioUrl, start, end));
     }
   } else {
-    // Unknown size — download in one shot
     await onProgress?.("⏳ Downloading audio…");
-    const res = await fetch(audioUrl, { headers: { "User-Agent": "Mozilla/5.0" } });
+    const res = await fetch(audioUrl, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(120_000),
+    });
     if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
-    const buf = Buffer.from(await res.arrayBuffer());
-    allChunks.push(buf);
-    downloaded = buf.length;
+    allChunks.push(Buffer.from(await res.arrayBuffer()));
   }
 
-  // ── Concatenate ─────────────────────────────────────────────────────────────
   const combined = Buffer.concat(allChunks);
 
+  // ── Send ────────────────────────────────────────────────────────────────────
+  const caption = `🎧 *${esc(trunc(episodeTitle, 48))}*\n📻 ${esc(trunc(feedTitle, 36))}`;
+
   if (combined.length <= MAX_TG_BYTES) {
-    // ── Single audio message (best experience) ───────────────────────────────
-    await onProgress?.(`📤 Sending to Telegram… (${mb(combined.length)} MB)`);
-    await sendAudio(bot, chatId, combined, filename, mimeType, fmt([
-      `🎧 *${truncate(episodeTitle, 50)}*`,
-      `📻 ${truncate(feedTitle, 40)}`,
-      `_(${mb(combined.length)} MB)_`,
-    ]));
+    await onProgress?.(`📤 Sending… (${mb(combined.length)} MB)`);
+    await sendAudio(bot, chatId, combined, filename, mimeType, caption);
   } else {
-    // ── Multi-part audio — each part plays inline ────────────────────────────
-    const parts    = splitBuffer(combined, MAX_TG_BYTES);
-    const total    = parts.length;
-    for (let i = 0; i < total; i++) {
-      await onProgress?.(`📤 Uploading part ${i + 1}/${total} to Telegram…`);
-      await sendAudio(bot, chatId, parts[i],
-        `${sanitise(episodeTitle)}_part${i + 1}_of_${total}.${ext}`,
+    const parts = splitBuffer(combined, MAX_TG_BYTES);
+    for (let i = 0; i < parts.length; i++) {
+      await onProgress?.(`📤 Uploading part ${i + 1}/${parts.length}…`);
+      await sendAudio(
+        bot, chatId, parts[i],
+        `${sanitise(episodeTitle)}_part${i + 1}_of_${parts.length}.${ext}`,
         mimeType,
-        fmt([
-          `🎧 *${truncate(episodeTitle, 46)}*`,
-          `📻 ${truncate(feedTitle, 36)}`,
-          `📦 Part ${i + 1} of ${total} · _(${mb(parts[i].length)} MB)_`,
-        ])
+        `${caption}\n📦 Part ${i + 1} of ${parts.length}`
       );
     }
   }
@@ -106,17 +91,11 @@ export async function sendEpisodeAudio(opts: DownloadOptions): Promise<void> {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 async function sendAudio(
-  bot: TelegramBot,
-  chatId: number,
-  buf: Buffer,
-  filename: string,
-  contentType: string,
-  caption: string
+  bot: TelegramBot, chatId: number, buf: Buffer,
+  filename: string, contentType: string, caption: string
 ): Promise<void> {
-  await bot.sendAudio(
-    chatId,
-    buf as any,
-    { caption, parse_mode: "Markdown" },
+  await bot.sendAudio(chatId, buf as any,
+    { caption, parse_mode: "MarkdownV2" },
     { filename, contentType }
   );
 }
@@ -125,7 +104,8 @@ async function downloadRange(url: string, start: number, end: number): Promise<B
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const res = await fetch(url, {
-        headers: { "User-Agent": "Mozilla/5.0", "Range": `bytes=${start}-${end}` },
+        headers: { "User-Agent": "Mozilla/5.0", Range: `bytes=${start}-${end}` },
+        signal: AbortSignal.timeout(60_000),
       });
       if (!res.ok && res.status !== 206) throw new Error(`HTTP ${res.status}`);
       return Buffer.from(await res.arrayBuffer());
@@ -139,9 +119,7 @@ async function downloadRange(url: string, start: number, end: number): Promise<B
 
 function splitBuffer(buf: Buffer, size: number): Buffer[] {
   const parts: Buffer[] = [];
-  for (let i = 0; i < buf.length; i += size) {
-    parts.push(buf.slice(i, i + size));
-  }
+  for (let i = 0; i < buf.length; i += size) parts.push(buf.slice(i, i + size));
   return parts;
 }
 
@@ -153,7 +131,8 @@ function mb(bytes: number): string {
   return (bytes / 1048576).toFixed(1);
 }
 
-// ── Bot singleton (set by index.ts) ──────────────────────────────────────────
+// ── Bot singleton ─────────────────────────────────────────────────────────────
+
 let _bot: TelegramBot | null = null;
 export function registerBotForDownloader(bot: TelegramBot): void { _bot = bot; }
 function getBotInstance(): TelegramBot {

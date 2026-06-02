@@ -7,18 +7,25 @@ import { logger } from "../lib/logger.js";
 let bot: TelegramBot | null = null;
 
 const COMMANDS: TelegramBot.BotCommand[] = [
-  { command: "start",      description: "🏠 Open control panel" },
-  { command: "feeds",      description: "📻 My subscriptions" },
-  { command: "latest",     description: "🆕 Latest episodes" },
-  { command: "trending",   description: "🌍 Trending by country" },
-  { command: "browse",     description: "🌐 Browse iTunes catalogue" },
-  { command: "add",        description: "➕ Add podcast via RSS URL" },
-  { command: "search",     description: "🔎 Search my episodes" },
-  { command: "favourites", description: "❤️ Favourited episodes" },
-  { command: "queue",      description: "⏭ Playback queue" },
-  { command: "tags",       description: "🏷 Tags & folders" },
-  { command: "stats",      description: "📊 Listening statistics" },
-  { command: "refresh",    description: "🔄 Refresh all feeds" },
+  { command: "start",      description: "Start here" },
+  { command: "feeds",      description: "My subscriptions" },
+  { command: "latest",     description: "Latest episodes" },
+  { command: "add",        description: "Add a podcast via RSS" },
+  { command: "search",     description: "Search episodes" },
+  { command: "queue",      description: "Playback queue" },
+  { command: "favourites", description: "Favourited episodes" },
+  { command: "stats",      description: "My statistics" },
+  { command: "discover",   description: "Discover new podcasts" },
+  { command: "resume",     description: "Continue listening" },
+  { command: "refresh",    description: "Refresh all feeds" },
+  { command: "settings",   description: "Preferences" },
+  { command: "notes",      description: "My notes & bookmarks" },
+  { command: "tsearch",    description: "Search transcripts" },
+  { command: "ask",        description: "Ask AI about episode" },
+  { command: "playlist",   description: "Build a playlist" },
+  { command: "import",     description: "Import OPML file" },
+  { command: "help",       description: "Help & commands" },
+  { command: "about",      description: "About iCast" },
 ];
 
 export function startBot(): TelegramBot | null {
@@ -41,15 +48,24 @@ export function startBot(): TelegramBot | null {
   registerBotForDownloader(bot);
   registerHandlers(bot);
 
-  // Register commands with Telegram (shows in the command menu)
   bot.setMyCommands(COMMANDS).catch((err) => {
     logger.warn({ err }, "Could not register bot commands");
   });
 
-  // Start background poller (new-episode notifications every 15 min)
   startPoller(bot);
 
-  logger.info("Telegram podcast bot started");
+  logger.info("iCast Telegram bot started (polling mode)");
+
+  process.on("SIGTERM", async () => {
+    logger.info("SIGTERM received — shutting down gracefully…");
+    await bot?.stopPolling();
+    process.exit(0);
+  });
+
+  process.on("SIGINT", () => {
+    process.exit(0);
+  });
+
   return bot;
 }
 
