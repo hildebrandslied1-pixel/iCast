@@ -446,6 +446,49 @@ export function hasGroqKey(): boolean {
   return Boolean(process.env.GROQ_API_KEY);
 }
 
+// ─── Translate ────────────────────────────────────────────────────────────────
+
+export async function translateText(text: string, targetLang = "English"): Promise<string> {
+  return withRetry(async () => {
+    const groq = getGroq();
+    const resp = await groq.chat.completions.create({
+      model: MODELS.summary,
+      max_tokens: 1200,
+      messages: [
+        {
+          role: "system",
+          content: `You are a professional translator. Translate the following text to ${targetLang}. Preserve meaning, tone, and structure. Output ONLY the translated text, nothing else.`,
+        },
+        { role: "user", content: text.slice(0, 2000) },
+      ],
+    });
+    return resp.choices[0]?.message?.content?.trim() ?? text;
+  });
+}
+
+// ─── Extract best quote ───────────────────────────────────────────────────────
+
+export async function extractBestQuote(text: string, episodeTitle: string): Promise<string> {
+  return withRetry(async () => {
+    const groq = getGroq();
+    const resp = await groq.chat.completions.create({
+      model: MODELS.summary,
+      max_tokens: 300,
+      messages: [
+        {
+          role: "system",
+          content: `You are an expert at finding memorable, insightful quotes. Extract the single most powerful, thought-provoking quote from the podcast episode. The quote should be self-contained, inspiring, and shareable. Output ONLY the quote text in Arabic, nothing else — no attribution, no context, no quotation marks.`,
+        },
+        {
+          role: "user",
+          content: `Episode: "${episodeTitle}"\n\nContent:\n${text.slice(0, 3000)}`,
+        },
+      ],
+    });
+    return resp.choices[0]?.message?.content?.trim() ?? "لا يوجد اقتباس متاح.";
+  });
+}
+
 // Legacy compat aliases
 export const hasWhisperKey  = hasGroqKey;
 export const hasDeepseekKey = hasGroqKey;

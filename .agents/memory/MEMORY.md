@@ -2,3 +2,4 @@
 - [Transcription chunking](transcription.md) — chunked Whisper via HTTP Range requests; 23MB per chunk; retry logic; never stops mid-episode
 - [iTunes Charts API](itunes-api.md) — working endpoint format and fallback strategy for unsupported countries
 - [Railway deployment](railway-deploy.md) — Dockerfile + railway.json; PORT env required; healthcheck at /api/healthz
+- [Keyboard & UI design](keyboard-design.md) — paginated sub-menus (ep:ai:ID, ep:manage:ID); editMd takes InlineKeyboardMarkup not raw IKB; bookmarksTable has no position field; episodes has no listenedAt (use updatedAt)

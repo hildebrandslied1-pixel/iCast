@@ -26,20 +26,21 @@ import {
 } from "./ai.js";
 import { sendEpisodeAudio } from "./downloader.js";
 import {
-  DIV, esc, trunc, fmtDur, fmtDate, bar,
+  DIV, DIV_SM, esc, trunc, fmtDur, fmtDate, bar,
   welcomeMsg, helpMsg, aboutMsg, addPromptMsg, addPreviewMsg, addSuccessMsg,
   feedCard, episodeCard, feedListMsg, episodeListMsg, statsMsg,
   queueMsg, searchResultsMsg, summaryMsg, settingsMsg, notesMsg,
   discoverMsg, playlistMsg, celebrationMsg, doneMsg, errorMsg,
   softError, loadingMsg, weeklyBarChart, adminPanelMsg,
+  shareCard, digestMsg, quoteCard, analyticsCard,
   fmt, divider, shortDivider, truncate, formatDuration, formatDate,
   progressBar, parseDuration,
 } from "./formatter.js";
 import {
   MAIN_KEYBOARD, PANEL_BUTTONS, homeRow, HOME_BTN,
   ADMIN_KEYBOARD, ADMIN_PANEL_BUTTONS,
-  feedActions, episodeActions, paginationRow,
-  confirmRow, queueItemActions, settingsRows, ratingKeyboard,
+  feedActions, episodeActions, aiMenu, manageMenu, sleepTimerMenu,
+  paginationRow, confirmRow, queueItemActions, settingsRows, ratingKeyboard,
   sleepTimerRow, speedRow, discoverCategoriesKb,
 } from "./keyboards.js";
 import { logger } from "../lib/logger.js";
@@ -390,7 +391,22 @@ export function registerHandlers(bot: TelegramBot): void {
 
   bot.onText(/^\/import/, (msg) => {
     if (!rl(msg)) return;
-    void sendMd(bot, msg.chat.id, [`📂 *Import OPML*`, DIV, `Send an \.opml file to import your subscriptions\\.`].join("\n"));
+    void sendMd(bot, msg.chat.id, [`📂 *استيراد OPML*`, DIV, `أرسل ملف \.opml لاستيراد اشتراكاتك\\.`].join("\n"));
+  });
+
+  bot.onText(/^\/random/, async (msg) => {
+    if (!rl(msg)) return;
+    void cmdRandom(bot, msg.chat.id);
+  });
+
+  bot.onText(/^\/digest/, async (msg) => {
+    if (!rl(msg)) return;
+    void cmdDigest(bot, msg.chat.id);
+  });
+
+  bot.onText(/^\/recommend/, async (msg) => {
+    if (!rl(msg)) return;
+    void cmdRecommend(bot, msg.chat.id);
   });
 
   // ── Admin commands ───────────────────────────────────────────────────────
@@ -536,7 +552,7 @@ export function registerHandlers(bot: TelegramBot): void {
       return;
     }
 
-    // Panel button press
+    // Panel button press (Arabic labels)
     const panelCmd = PANEL_BUTTONS[text];
     if (panelCmd && !sess.action) {
       void routeCommand(bot, chatId, panelCmd);
@@ -665,59 +681,89 @@ async function routeCallback(
     }
     if (cmd === "search") {
       getSession(chatId).action = "awaiting_search";
-      await editMd(bot, chatId, msgId, `🔍 *Search Episodes*\n${DIV}\nSend a keyword:`, { inline_keyboard: [homeRow()] });
+      await editMd(bot, chatId, msgId, `🔍 *بحث في الحلقات*\n${DIV}\nأرسل كلمة مفتاحية:`, { inline_keyboard: [homeRow()] });
       return;
     }
     if (cmd === "browse") {
       getSession(chatId).action = "awaiting_browse";
-      await editMd(bot, chatId, msgId, `🌐 *Browse iTunes*\n${DIV}\nEnter a show name or topic:`, { inline_keyboard: [homeRow()] });
+      await editMd(bot, chatId, msgId, `🌐 *تصفح iTunes*\n${DIV}\nأدخل اسم بودكاست أو موضوع:`, { inline_keyboard: [homeRow()] });
       return;
     }
     await cmdDispatch(bot, chatId, msgId, cmd); return;
   }
 
-  // Feed & episode navigation (legacy patterns)
+  // ── Play shortcut (same as episode detail) ────────────────────────────
+  if (data.startsWith("play:"))            { await showEpisodeDetail(bot, chatId, msgId, +data.slice(5)); return; }
+
+  // ── Feed navigation ────────────────────────────────────────────────────
   if (data.startsWith("feed:")) {
     const parts = data.split(":");
-    if (parts[1] === "rate")      { await editMd(bot, chatId, msgId, `⭐ *Rate this Podcast*\n${DIV}\nChoose your rating:`, { inline_keyboard: ratingKeyboard(+parts[2]) }); return; }
+    if (parts[1] === "rate")      { await editMd(bot, chatId, msgId, `⭐ *تقييم البودكاست*\n${DIV}\nاختر تقييمك:`, { inline_keyboard: ratingKeyboard(+parts[2]) }); return; }
     if (parts[1] === "setRating") { await handleSetRating(bot, chatId, msgId, +parts[2], +parts[3]); return; }
     if (parts[1] === "eps")       { await showFeedEpisodes(bot, chatId, msgId, +parts[2], 0); return; }
     await showFeedEpisodes(bot, chatId, msgId, +data.slice(5), 0); return;
   }
-  if (data.startsWith("eplist:"))          { const [,f,p] = data.split(":").map(Number); await showFeedEpisodes(bot, chatId, msgId, f, p); return; }
-  if (data.startsWith("ep:ask:"))          { await initAskMode(bot, chatId, msgId, +data.slice(7)); return; }
-  if (data.startsWith("ep:summarize:"))    { void handleEpSummarize(bot, chatId, +data.slice(14)); return; }
-  if (data.startsWith("ep:transcribe:"))   { void handleEpTranscribe(bot, chatId, +data.slice(15)); return; }
-  if (data.startsWith("ep:share:"))        { await handleEpShare(bot, chatId, +data.slice(9)); return; }
-  if (data.startsWith("ep:addNote:"))      { await initNoteMode(bot, chatId, msgId, +data.slice(11)); return; }
-  if (data.startsWith("ep:sleep:"))        { const [,epId,mins] = data.split(":").slice(1); await bot.answerCallbackQuery(query.id, { text: `🌙 Sleep timer: ${mins} min` }); return; }
-  if (data.startsWith("ep:speed:"))        { const [,epId,speed] = data.split(":").slice(1); await upsertUserPrefs(String(chatId), { playbackSpeed: speed }); await bot.answerCallbackQuery(query.id, { text: `▶️ Speed: ${speed}×` }); return; }
-  if (data.startsWith("ep:"))              { await showEpisodeDetail(bot, chatId, msgId, +data.slice(3)); return; }
+  if (data.startsWith("eplist:"))         { const [,f,p] = data.split(":").map(Number); await showFeedEpisodes(bot, chatId, msgId, f, p); return; }
 
-  if (data.startsWith("fav:"))             { await toggleFavourite(bot, chatId, msgId, +data.slice(4)); return; }
-  if (data.startsWith("queue_add:"))       { await addToQueue(bot, chatId, msgId, +data.slice(10)); return; }
-  if (data.startsWith("queue_rm:"))        { await removeFromQueue(chatId, +data.slice(9)); await cmdQueue(bot, chatId, msgId); return; }
-  if (data.startsWith("queue:up:"))        { await moveQueue(chatId, +data.slice(9), "up"); await cmdQueue(bot, chatId, msgId); return; }
-  if (data.startsWith("queue:down:"))      { await moveQueue(chatId, +data.slice(11), "down"); await cmdQueue(bot, chatId, msgId); return; }
-  if (data.startsWith("queue:remove:"))    { await removeFromQueue(chatId, +data.slice(13)); await cmdQueue(bot, chatId, msgId); return; }
-  if (data.startsWith("listened:"))        { await markListened(bot, chatId, msgId, +data.slice(9)); return; }
-  if (data.startsWith("del_feed_confirm:")) { await showDeleteFeedConfirm(bot, chatId, msgId, +data.slice(18)); return; }
-  if (data.startsWith("del_feed:"))        { await deleteFeed(bot, chatId, msgId, +data.slice(9)); return; }
-  if (data.startsWith("refresh_feed:"))    { await refreshSingleFeed(bot, chatId, msgId, +data.slice(12)); return; }
+  // ── Episode sub-menus (NEW) ────────────────────────────────────────────
+  if (data.startsWith("ep:ai:"))          { await showEpAiMenu(bot, chatId, msgId, +data.slice(6)); return; }
+  if (data.startsWith("ep:manage:"))      { await showEpManageMenu(bot, chatId, msgId, +data.slice(10)); return; }
+  if (data.startsWith("ep:sleep_menu:"))  { await showEpSleepMenu(bot, chatId, msgId, +data.slice(14)); return; }
+  if (data.startsWith("ep:bookmark:"))    { await handleEpBookmark(bot, chatId, msgId, +data.slice(12)); return; }
+  if (data.startsWith("ep:translate:"))   { void handleEpTranslate(bot, chatId, +data.slice(13)); return; }
+  if (data.startsWith("ep:quote:"))       { void handleEpQuote(bot, chatId, +data.slice(9)); return; }
+  if (data.startsWith("ep:analytics:"))   { await handleEpAnalytics(bot, chatId, msgId, +data.slice(13)); return; }
 
-  // Downloads & AI
-  if (data.startsWith("download:"))        { void handleDownload(bot, chatId, +data.slice(9)); return; }
-  if (data.startsWith("ai_summary:"))      { void handleAiSummary(bot, chatId, +data.slice(11)); return; }
-  if (data.startsWith("ai_detail:"))       { void handleAiDetail(bot, chatId, +data.slice(10)); return; }
-  if (data.startsWith("transcript:"))      { void handleTranscriptPdf(bot, chatId, +data.slice(11)); return; }
-  if (data.startsWith("ep:deep:"))         { void handleEpDeepExplanation(bot, chatId, +data.slice(8)); return; }
-  if (data.startsWith("ep:questions:"))    { void handleEpQuestions(bot, chatId, +data.slice(13)); return; }
-  if (data.startsWith("questions_new:"))   { void handleEpQuestionsNew(bot, chatId, +data.slice(14)); return; }
+  // ── Episode actions ────────────────────────────────────────────────────
+  if (data.startsWith("ep:ask:"))         { await initAskMode(bot, chatId, msgId, +data.slice(7)); return; }
+  if (data.startsWith("ep:summarize:"))   { void handleEpSummarize(bot, chatId, +data.slice(14)); return; }
+  if (data.startsWith("ep:transcribe:"))  { void handleEpTranscribe(bot, chatId, +data.slice(15)); return; }
+  if (data.startsWith("ep:share:"))       { await handleEpShare(bot, chatId, msgId, +data.slice(9)); return; }
+  if (data.startsWith("ep:addNote:"))     { await initNoteMode(bot, chatId, msgId, +data.slice(11)); return; }
+  if (data.startsWith("ep:sleep:")) {
+    const parts = data.split(":");
+    const mins = parts[3] ?? "30";
+    await bot.answerCallbackQuery(query.id, { text: `🌙 مؤقت نوم: ${mins} دقيقة مُفعَّل` });
+    await sendMd(bot, chatId, `🌙 *مؤقت النوم*\n${DIV}\nسيصدر إشعار بعد *${esc(mins)}* دقيقة\\.`);
+    // Schedule a notification
+    const minsNum = parseInt(mins, 10);
+    if (!isNaN(minsNum) && minsNum > 0) {
+      setTimeout(async () => {
+        await sendMd(bot, chatId, `🛌 *وقت النوم\\!*\n${DIV}\nتوقف الاستماع الآن\\. تصبح على خير\\! 😴`).catch(() => {});
+      }, minsNum * 60 * 1000);
+    }
+    return;
+  }
+  if (data.startsWith("ep:speed:"))       { const parts = data.split(":"); const speed = parts[3] ?? "1"; await upsertUserPrefs(String(chatId), { playbackSpeed: speed }); await bot.answerCallbackQuery(query.id, { text: `▶️ السرعة: ${speed}×` }); return; }
 
-  // Admin callbacks
-  if (data.startsWith("admin_approve:")) { await handleAdminApprove(bot, chatId, query, data.slice(14)); return; }
-  if (data.startsWith("admin_reject:"))  { await handleAdminReject(bot, chatId, query, data.slice(13)); return; }
-  if (data.startsWith("admin_block:"))   { await handleAdminBlock(bot, chatId, query, data.slice(12)); return; }
+  // ── AI actions ─────────────────────────────────────────────────────────
+  if (data.startsWith("ep:deep:"))        { void handleEpDeepExplanation(bot, chatId, +data.slice(8)); return; }
+  if (data.startsWith("ep:questions:"))   { void handleEpQuestions(bot, chatId, +data.slice(13)); return; }
+  if (data.startsWith("questions_new:"))  { void handleEpQuestionsNew(bot, chatId, +data.slice(14)); return; }
+  if (data.startsWith("ai_summary:"))     { void handleAiSummary(bot, chatId, +data.slice(11)); return; }
+  if (data.startsWith("ai_detail:"))      { void handleAiDetail(bot, chatId, +data.slice(10)); return; }
+  if (data.startsWith("transcript:"))     { void handleTranscriptPdf(bot, chatId, +data.slice(11)); return; }
+  if (data.startsWith("download:"))       { void handleDownload(bot, chatId, +data.slice(9)); return; }
+
+  // ── Episode fallback (must be LAST in ep: chain) ───────────────────────
+  if (data.startsWith("ep:"))             { await showEpisodeDetail(bot, chatId, msgId, +data.slice(3)); return; }
+
+  // ── Queue & favourites ─────────────────────────────────────────────────
+  if (data.startsWith("fav:"))            { await toggleFavourite(bot, chatId, msgId, +data.slice(4)); return; }
+  if (data.startsWith("queue_add:"))      { await addToQueue(bot, chatId, msgId, +data.slice(10)); return; }
+  if (data.startsWith("queue_rm:"))       { await removeFromQueue(chatId, +data.slice(9)); await cmdQueue(bot, chatId, msgId); return; }
+  if (data.startsWith("queue:up:"))       { await moveQueue(chatId, +data.slice(9), "up"); await cmdQueue(bot, chatId, msgId); return; }
+  if (data.startsWith("queue:down:"))     { await moveQueue(chatId, +data.slice(11), "down"); await cmdQueue(bot, chatId, msgId); return; }
+  if (data.startsWith("queue:remove:"))   { await removeFromQueue(chatId, +data.slice(13)); await cmdQueue(bot, chatId, msgId); return; }
+  if (data.startsWith("listened:"))       { await markListened(bot, chatId, msgId, +data.slice(9)); return; }
+  if (data.startsWith("del_feed_confirm:")){ await showDeleteFeedConfirm(bot, chatId, msgId, +data.slice(18)); return; }
+  if (data.startsWith("del_feed:"))       { await deleteFeed(bot, chatId, msgId, +data.slice(9)); return; }
+  if (data.startsWith("refresh_feed:"))   { await refreshSingleFeed(bot, chatId, msgId, +data.slice(12)); return; }
+
+  // ── Admin callbacks ────────────────────────────────────────────────────
+  if (data.startsWith("admin_approve:"))  { await handleAdminApprove(bot, chatId, query, data.slice(14)); return; }
+  if (data.startsWith("admin_reject:"))   { await handleAdminReject(bot, chatId, query, data.slice(13)); return; }
+  if (data.startsWith("admin_block:"))    { await handleAdminBlock(bot, chatId, query, data.slice(12)); return; }
 
   // Tags
   if (data.startsWith("tag_list:"))        { await showTagEpisodes(bot, chatId, msgId, +data.slice(9), 0); return; }
@@ -1679,12 +1725,22 @@ async function handleEpTranscribe(bot: TelegramBot, chatId: number, epId: number
   }
 }
 
-async function handleEpShare(bot: TelegramBot, chatId: number, epId: number): Promise<void> {
-  const ep = await db.select({ audioUrl: episodesTable.audioUrl, title: episodesTable.title }).from(episodesTable).where(eq(episodesTable.id, epId)).limit(1);
+async function handleEpShare(bot: TelegramBot, chatId: number, _msgId: number, epId: number): Promise<void> {
+  const ep = await db.select().from(episodesTable).where(eq(episodesTable.id, epId)).limit(1);
   if (!ep[0]) return;
-  const url = ep[0].audioUrl ?? "";
-  await sendMd(bot, chatId, `🔗 *${esc(trunc(ep[0].title, 28))}*\n${DIV}\n${esc(url)}`, {
-    disable_web_page_preview: true,
+  const feed = await db.select({ title: feedsTable.title }).from(feedsTable)
+    .where(eq(feedsTable.id, ep[0].feedId)).limit(1);
+
+  const card = shareCard({
+    title: ep[0].title,
+    feedTitle: feed[0]?.title,
+    pubDate: ep[0].pubDate,
+    duration: ep[0].duration,
+    description: ep[0].description,
+  });
+
+  await sendMd(bot, chatId, card, {
+    reply_markup: { inline_keyboard: [[{ text: "◀️ رجوع للحلقة", callback_data: `ep:${epId}` }]] },
   });
 }
 
@@ -2339,6 +2395,279 @@ async function handleEpQuestionsNew(bot: TelegramBot, chatId: number, epId: numb
       reply_markup: { inline_keyboard: [
         [{ text: "🎲 100 سؤال جديد", callback_data: `questions_new:${epId}` }],
         [{ text: "◀️ رجوع للحلقة",   callback_data: `ep:${epId}` }],
+        homeRow(),
+      ]},
+    });
+  });
+}
+
+// ─── SUB-MENU HANDLERS (NEW) ──────────────────────────────────────────────────
+
+async function showEpAiMenu(bot: TelegramBot, chatId: number, msgId: number, epId: number): Promise<void> {
+  const ep = await db.select({ title: episodesTable.title, transcript: episodesTable.transcript })
+    .from(episodesTable).where(eq(episodesTable.id, epId)).limit(1);
+  if (!ep[0]) return;
+
+  const hasTranscript = Boolean(ep[0].transcript);
+  await editMd(bot, chatId, msgId,
+    [
+      `🤖 *AI مساعد*`,
+      `════════════════════`,
+      `🎙 _${esc(trunc(ep[0].title, 34))}_`,
+      DIV_SM,
+      hasTranscript ? `✅ النص المفرَّغ متاح` : `💡 يمكنك تفريغ الحلقة أولاً للحصول على نتائج أفضل`,
+    ].join("\n"),
+    { reply_markup: { inline_keyboard: aiMenu(epId, hasTranscript) } } as any
+  );
+}
+
+async function showEpManageMenu(bot: TelegramBot, chatId: number, msgId: number, epId: number): Promise<void> {
+  const ep = await db.select({ title: episodesTable.title }).from(episodesTable)
+    .where(eq(episodesTable.id, epId)).limit(1);
+  if (!ep[0]) return;
+
+  await editMd(bot, chatId, msgId,
+    [
+      `⚙️ *إدارة الحلقة*`,
+      `════════════════════`,
+      `🎙 _${esc(trunc(ep[0].title, 34))}_`,
+    ].join("\n"),
+    { reply_markup: { inline_keyboard: manageMenu(epId) } } as any
+  );
+}
+
+async function showEpSleepMenu(bot: TelegramBot, chatId: number, msgId: number, epId: number): Promise<void> {
+  const ep = await db.select({ title: episodesTable.title }).from(episodesTable)
+    .where(eq(episodesTable.id, epId)).limit(1);
+  if (!ep[0]) return;
+
+  await editMd(bot, chatId, msgId,
+    [
+      `⏱ *مؤقت النوم*`,
+      `════════════════════`,
+      `اختر المدة التي تريد الاستماع فيها:`,
+    ].join("\n"),
+    { reply_markup: { inline_keyboard: sleepTimerMenu(epId) } } as any
+  );
+}
+
+async function handleEpBookmark(
+  bot: TelegramBot, chatId: number, _msgId: number, epId: number
+): Promise<void> {
+  const ep = await db.select({ title: episodesTable.title }).from(episodesTable)
+    .where(eq(episodesTable.id, epId)).limit(1);
+  if (!ep[0]) return;
+
+  const exists = await db.select({ id: bookmarksTable.id }).from(bookmarksTable)
+    .where(and(eq(bookmarksTable.chatId, String(chatId)), eq(bookmarksTable.episodeId, epId)))
+    .limit(1);
+
+  if (exists[0]) {
+    await db.delete(bookmarksTable)
+      .where(and(eq(bookmarksTable.chatId, String(chatId)), eq(bookmarksTable.episodeId, epId)));
+    await sendMd(bot, chatId, `🔖 *إزالة الإشارة*\n${DIV}\n_تم إزالة الإشارة من "${esc(trunc(ep[0].title, 28))}"_`, {
+      reply_markup: { inline_keyboard: [[{ text: "◀️ رجوع", callback_data: `ep:manage:${epId}` }]] },
+    });
+  } else {
+    await db.insert(bookmarksTable).values({
+      chatId: String(chatId), episodeId: epId,
+    }).onConflictDoNothing();
+    await sendMd(bot, chatId, `🔖 *تمت الإشارة\\!*\n${DIV}\n_"${esc(trunc(ep[0].title, 28))}" في إشاراتك المرجعية_`, {
+      reply_markup: { inline_keyboard: [[{ text: "◀️ رجوع", callback_data: `ep:manage:${epId}` }]] },
+    });
+  }
+}
+
+async function handleEpTranslate(bot: TelegramBot, chatId: number, epId: number): Promise<void> {
+  if (!hasGroqKey()) { await sendMd(bot, chatId, `⚠️ _GROQ_API_KEY غير مهيأ_`); return; }
+
+  const ep = await db.select().from(episodesTable).where(eq(episodesTable.id, epId)).limit(1);
+  if (!ep[0]) return;
+
+  const content = ep[0].transcript ?? ep[0].description ?? ep[0].title;
+
+  await withSpinner(bot, chatId, "🌍 جاري الترجمة", async () => {
+    const { translateText } = await import("./ai.js");
+    const translated = await translateText(content.slice(0, 1500));
+
+    const lines = [
+      `🌍 *ترجمة الحلقة*`,
+      DIV,
+      `🎙 _${esc(trunc(ep[0].title, 30))}_`,
+      DIV_SM,
+      esc(trunc(translated, 800)),
+    ];
+    await sendMd(bot, chatId, lines.join("\n"), {
+      reply_markup: { inline_keyboard: [[{ text: "◀️ رجوع للحلقة", callback_data: `ep:${epId}` }]] },
+    });
+  });
+}
+
+async function handleEpQuote(bot: TelegramBot, chatId: number, epId: number): Promise<void> {
+  if (!hasGroqKey()) { await sendMd(bot, chatId, `⚠️ _GROQ_API_KEY غير مهيأ_`); return; }
+
+  const ep = await db.select().from(episodesTable).where(eq(episodesTable.id, epId)).limit(1);
+  if (!ep[0]) return;
+
+  const feed = await db.select({ title: feedsTable.title }).from(feedsTable)
+    .where(eq(feedsTable.id, ep[0].feedId)).limit(1);
+
+  const content = ep[0].transcript ?? ep[0].description ?? "";
+  if (!content.trim()) {
+    await sendMd(bot, chatId, softError("لا يوجد محتوى", "قم بتفريغ الحلقة أولاً\\."));
+    return;
+  }
+
+  await withSpinner(bot, chatId, "💡 استخراج الاقتباس", async () => {
+    const { extractBestQuote } = await import("./ai.js");
+    const quote = await extractBestQuote(content.slice(0, 3000), ep[0].title);
+    const card  = quoteCard(quote, ep[0].title, feed[0]?.title);
+
+    await sendMd(bot, chatId, card, {
+      reply_markup: { inline_keyboard: [
+        [{ text: "🔄 اقتباس آخر",   callback_data: `ep:quote:${epId}` }],
+        [{ text: "◀️ رجوع للحلقة", callback_data: `ep:${epId}` }],
+      ]},
+    });
+  });
+}
+
+async function handleEpAnalytics(
+  bot: TelegramBot, chatId: number, msgId: number, epId: number
+): Promise<void> {
+  const ep = await db.select().from(episodesTable).where(eq(episodesTable.id, epId)).limit(1);
+  if (!ep[0]) return;
+
+  const wordCount = ep[0].transcript
+    ? ep[0].transcript.split(/\s+/).filter(Boolean).length
+    : null;
+
+  const card = analyticsCard({
+    title: ep[0].title,
+    duration: ep[0].duration,
+    pubDate: ep[0].pubDate,
+    wordCount: wordCount ?? undefined,
+  });
+
+  await editMd(bot, chatId, msgId, card,
+    { reply_markup: { inline_keyboard: [[{ text: "◀️ رجوع", callback_data: `ep:manage:${epId}` }]] } } as any
+  );
+}
+
+// ─── NEW COMMANDS ──────────────────────────────────────────────────────────────
+
+async function cmdRandom(bot: TelegramBot, chatId: number): Promise<void> {
+  const feeds = await db.select({ id: feedsTable.id }).from(feedsTable)
+    .where(eq(feedsTable.chatId, String(chatId)));
+
+  if (!feeds.length) {
+    await sendMd(bot, chatId, softError("لا توجد بودكاستات", "أضف بودكاست أولاً بـ /add"));
+    return;
+  }
+
+  const feedIds = feeds.map((f) => f.id);
+  const eps = await db.select().from(episodesTable)
+    .where(and(
+      inArray(episodesTable.feedId, feedIds),
+      sql`${episodesTable.listened} IS NULL OR ${episodesTable.listened} = false`
+    ))
+    .orderBy(sql`RANDOM()`)
+    .limit(1);
+
+  if (!eps[0]) {
+    await sendMd(bot, chatId, softError("لا توجد حلقات غير مسموعة", "جرّب تحديث بودكاستاتك\\."));
+    return;
+  }
+
+  const feed = await db.select({ title: feedsTable.title }).from(feedsTable)
+    .where(eq(feedsTable.id, eps[0].feedId)).limit(1);
+
+  await sendMd(bot, chatId,
+    [`🎲 *حلقة عشوائية*`, DIV, episodeCard({ ...eps[0], feedTitle: feed[0]?.title })].join("\n"),
+    { reply_markup: { inline_keyboard: episodeActions(eps[0].id, { isPlayed: eps[0].listened ?? false }) } }
+  );
+}
+
+async function cmdDigest(bot: TelegramBot, chatId: number): Promise<void> {
+  const feeds = await db.select({ id: feedsTable.id }).from(feedsTable)
+    .where(eq(feedsTable.chatId, String(chatId)));
+
+  if (!feeds.length) {
+    await sendMd(bot, chatId, softError("لا توجد اشتراكات", "أضف بودكاست بـ /add"));
+    return;
+  }
+
+  const feedIds = feeds.map((f) => f.id);
+  const since   = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+
+  const eps = await db.select({
+    id: episodesTable.id,
+    title: episodesTable.title,
+    duration: episodesTable.duration,
+    feedId: episodesTable.feedId,
+  })
+    .from(episodesTable)
+    .where(and(
+      inArray(episodesTable.feedId, feedIds),
+      gt(episodesTable.pubDate, since),
+    ))
+    .orderBy(desc(episodesTable.pubDate))
+    .limit(10);
+
+  if (!eps.length) {
+    await sendMd(bot, chatId, [`🌅 *الملخص الأسبوعي*`, DIV, `لا توجد حلقات جديدة هذا الأسبوع\\.`].join("\n"), {
+      reply_markup: { inline_keyboard: [homeRow()] },
+    });
+    return;
+  }
+
+  const feedMap: Record<number, string> = {};
+  for (const f of feeds) {
+    const fd = await db.select({ id: feedsTable.id, title: feedsTable.title }).from(feedsTable)
+      .where(eq(feedsTable.id, f.id)).limit(1);
+    if (fd[0]) feedMap[fd[0].id] = fd[0].title;
+  }
+
+  const items = eps.map((e) => ({
+    title: e.title, feedTitle: feedMap[e.feedId] ?? null, duration: e.duration,
+  }));
+
+  const msg = digestMsg(items);
+  const kb = eps.slice(0, 5).map((e) => [{ text: `▶️ ${trunc(e.title, 24)}`, callback_data: `ep:${e.id}` }]);
+  kb.push(homeRow());
+
+  await sendMd(bot, chatId, msg, { reply_markup: { inline_keyboard: kb } });
+}
+
+async function cmdRecommend(bot: TelegramBot, chatId: number): Promise<void> {
+  if (!hasGroqKey()) { await sendMd(bot, chatId, `⚠️ _GROQ_API_KEY غير مهيأ_`); return; }
+
+  const history = await db.select({ title: episodesTable.title, feedId: episodesTable.feedId })
+    .from(episodesTable)
+    .where(and(
+      eq(episodesTable.listened, true),
+      sql`${episodesTable.feedId} IN (
+        SELECT id FROM feeds WHERE chat_id = ${String(chatId)}
+      )`
+    ))
+    .orderBy(desc(episodesTable.updatedAt))
+    .limit(10);
+
+  if (!history.length) {
+    await sendMd(bot, chatId, softError("لا يوجد تاريخ استماع", "استمع لبعض الحلقات أولاً\\."));
+    return;
+  }
+
+  await withSpinner(bot, chatId, "🎯 جاري توليد التوصيات", async () => {
+    const listenedTitles = history.map((e) => e.title);
+    const recsArr = await getRecommendations(listenedTitles, "ar");
+    const recs = recsArr.length
+      ? [`🎯 *توصيات مخصصة لك*`, DIV, ...recsArr.map((r, i) => `${i + 1}\\. ${esc(r)}`)].join("\n")
+      : `🎯 لا توجد توصيات في الوقت الحالي\\.`;
+    await sendMd(bot, chatId, recs);
+    await sendMd(bot, chatId, `🎯 *توصياتك جاهزة\\!*`, {
+      reply_markup: { inline_keyboard: [
+        [{ text: "🌍 اكتشاف المزيد", callback_data: "cmd:browse" }],
         homeRow(),
       ]},
     });
