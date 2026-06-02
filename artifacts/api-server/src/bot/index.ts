@@ -7,7 +7,7 @@ import { logger } from "../lib/logger.js";
 let bot: TelegramBot | null = null;
 
 const COMMANDS: TelegramBot.BotCommand[] = [
-  { command: "start",      description: "🏠 Main menu" },
+  { command: "start",      description: "🏠 Open control panel" },
   { command: "feeds",      description: "📻 My subscriptions" },
   { command: "latest",     description: "🆕 Latest episodes" },
   { command: "trending",   description: "🌍 Trending by country" },
@@ -16,9 +16,9 @@ const COMMANDS: TelegramBot.BotCommand[] = [
   { command: "search",     description: "🔎 Search my episodes" },
   { command: "favourites", description: "❤️ Favourited episodes" },
   { command: "queue",      description: "⏭ Playback queue" },
+  { command: "tags",       description: "🏷 Tags & folders" },
   { command: "stats",      description: "📊 Listening statistics" },
   { command: "refresh",    description: "🔄 Refresh all feeds" },
-  { command: "help",       description: "❓ Help & commands" },
 ];
 
 export function startBot(): TelegramBot | null {

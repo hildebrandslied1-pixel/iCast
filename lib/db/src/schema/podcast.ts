@@ -43,14 +43,32 @@ export const queueTable = pgTable("queue", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const insertFeedSchema    = createInsertSchema(feedsTable).omit({ id: true, createdAt: true });
-export const insertEpisodeSchema = createInsertSchema(episodesTable).omit({ id: true, createdAt: true });
-export const insertFavoriteSchema = createInsertSchema(favoritesTable).omit({ id: true, createdAt: true });
-export const insertQueueSchema   = createInsertSchema(queueTable).omit({ id: true, createdAt: true });
+export const tagsTable = pgTable("tags", {
+  id: serial("id").primaryKey(),
+  chatId: text("chat_id").notNull(),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
 
-export type Feed           = typeof feedsTable.$inferSelect;
-export type Episode        = typeof episodesTable.$inferSelect;
-export type Favorite       = typeof favoritesTable.$inferSelect;
-export type Queue          = typeof queueTable.$inferSelect;
-export type InsertFeed     = z.infer<typeof insertFeedSchema>;
-export type InsertEpisode  = z.infer<typeof insertEpisodeSchema>;
+export const episodeTagsTable = pgTable("episode_tags", {
+  id: serial("id").primaryKey(),
+  episodeId: integer("episode_id").notNull().references(() => episodesTable.id),
+  tagId: integer("tag_id").notNull().references(() => tagsTable.id),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertFeedSchema     = createInsertSchema(feedsTable).omit({ id: true, createdAt: true });
+export const insertEpisodeSchema  = createInsertSchema(episodesTable).omit({ id: true, createdAt: true });
+export const insertFavoriteSchema = createInsertSchema(favoritesTable).omit({ id: true, createdAt: true });
+export const insertQueueSchema    = createInsertSchema(queueTable).omit({ id: true, createdAt: true });
+export const insertTagSchema      = createInsertSchema(tagsTable).omit({ id: true, createdAt: true });
+export const insertEpisodeTagSchema = createInsertSchema(episodeTagsTable).omit({ id: true, createdAt: true });
+
+export type Feed         = typeof feedsTable.$inferSelect;
+export type Episode      = typeof episodesTable.$inferSelect;
+export type Favorite     = typeof favoritesTable.$inferSelect;
+export type Queue        = typeof queueTable.$inferSelect;
+export type Tag          = typeof tagsTable.$inferSelect;
+export type EpisodeTag   = typeof episodeTagsTable.$inferSelect;
+export type InsertFeed   = z.infer<typeof insertFeedSchema>;
+export type InsertEpisode = z.infer<typeof insertEpisodeSchema>;
