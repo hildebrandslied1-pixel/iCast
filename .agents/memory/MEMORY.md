@@ -2,4 +2,6 @@
 - [Transcription chunking](transcription.md) — chunked Whisper via HTTP Range requests; 23MB per chunk; retry logic; never stops mid-episode
 - [iTunes Charts API](itunes-api.md) — working endpoint format and fallback strategy for unsupported countries
 - [Railway deployment](railway-deploy.md) — Dockerfile + railway.json; PORT env required; healthcheck at /api/healthz
-- [Keyboard & UI design](keyboard-design.md) — paginated sub-menus (ep:ai:ID, ep:manage:ID); editMd takes InlineKeyboardMarkup not raw IKB; bookmarksTable has no position field; episodes has no listenedAt (use updatedAt)
+- [Vaporwave UI system](vaporwave-ui.md) — formatter.ts exports V token object + LOGO/WAVE/DIV; all text British English; esc() escapes MarkdownV2 chars
+- [Keyboard design](keyboard-design.md) — PANEL_BUTTONS keys are English strings matching MAIN_KEYBOARD; ep:ai:/ep:manage: sub-menus; remindMenu/exportFormatKb/feedNotifMenu in keyboards.ts
+- [Admin setup](admin-setup.md) — SUPERADMIN_CHAT_ID env auto-promotes on /start (auth-flow.ts); /adminsetup <secret> uses ADMIN_SECRET env; usersTable role set to superadmin/admin
