@@ -61,107 +61,88 @@ export function backBtn(to: string, label = "◀️ Back"): TelegramBot.InlineKe
 }
 
 // ─── Episode Main Actions ─────────────────────────────────────────────────────
-//
-// Layout:
-//   [▶️ Play]          [📥 Download]
-//   [❤️ Favourite]     [⏭ Add to Queue]
-//   ─────────────────────────────────
-//   [🤖 AI Tools ▸]   [⚙️ Manage ▸]
-//   ─────────────────────────────────
-//   [✅ Mark Complete] [🏠 Home]
-//
 
 export function episodeActions(
   epId: number,
-  opts: { isFav?: boolean; isQueued?: boolean; isPlayed?: boolean } = {}
+  opts: {
+    isFav?:         boolean;
+    isQueued?:      boolean;
+    isPlayed?:      boolean;
+    hasTranscript?: boolean;
+    progress?:      number;
+  } = {}
 ): IKB {
   const { isFav, isQueued, isPlayed } = opts;
   return [
     [
-      { text: "▶️ Play",                             callback_data: `play:${epId}` },
-      { text: "📥 Download",                         callback_data: `download:${epId}` },
+      { text: "▶️ Play",                                         callback_data: `play:${epId}` },
+      { text: "📥 Download Audio",                               callback_data: `download:${epId}` },
     ],
     [
-      { text: isFav    ? "❤️ Favourited" : "🤍 Favourite", callback_data: `fav:${epId}` },
-      { text: isQueued ? "✅ In Queue"   : "⏭ Add to Queue", callback_data: `queue_add:${epId}` },
-    ],
-    [
-      { text: "🤖 AI Tools ▸",                       callback_data: `ep:ai:${epId}` },
-      { text: "⚙️ Manage ▸",                         callback_data: `ep:manage:${epId}` },
+      { text: isFav    ? "❤️ Favourited"  : "🤍 Favourite",    callback_data: `fav:${epId}` },
+      { text: isQueued ? "✅ In Queue"    : "⏭ Add to Queue",  callback_data: `queue_add:${epId}` },
     ],
     [
       { text: isPlayed ? "🔲 Mark Incomplete" : "✅ Mark Complete", callback_data: `listened:${epId}` },
-      HOME_BTN,
+      { text: "🛠 Tools",                                        callback_data: `ep:tools:${epId}` },
     ],
+    homeRow(),
   ];
 }
 
-// ─── AI Tools Sub-menu ────────────────────────────────────────────────────────
+// ─── ALL TOOLS in one scrollable list ────────────────────────────────────────
 //
-// Layout:
-//   [✨ Summary]       [📝 Transcript]
-//   [🎓 Deep Dive]     [❓ 100 Questions]
-//   [💬 AI Chat]       [🌍 Translate]
-//   [💡 Best Quote]    [📄 PDF Export]
-//   [◀️ Back to Episode]
+// Every episode feature, AI + management, in a single menu.
 //
 
-export function aiMenu(epId: number, hasTranscript = false): IKB {
+export function toolsMenu(epId: number, hasTranscript = false): IKB {
   return [
+    // ── AI Tools ──────────────────────────────────────────────────────
     [
-      { text: "✨ Summary",      callback_data: hasTranscript ? `ai_summary:${epId}` : `ep:summarize:${epId}` },
-      { text: "📝 Transcript",   callback_data: `ep:transcribe:${epId}` },
+      { text: "✨ Summary",         callback_data: `ep:summarize:${epId}` },
+      { text: "📝 Transcript",      callback_data: `ep:transcribe:${epId}` },
     ],
     [
-      { text: "🎓 Deep Dive",    callback_data: `ep:deep:${epId}` },
-      { text: "❓ 100 Questions", callback_data: `ep:questions:${epId}` },
+      { text: "🎓 Deep Dive",       callback_data: `ep:deep:${epId}` },
+      { text: "❓ 100 Questions",    callback_data: `ep:questions:${epId}` },
     ],
     [
-      { text: "💬 AI Chat",      callback_data: `ep:ask:${epId}` },
-      { text: "🌍 Translate",    callback_data: `ep:translate:${epId}` },
+      { text: "💬 AI Chat",         callback_data: `ep:ask:${epId}` },
+      { text: "🌍 Translate",       callback_data: `ep:translate:${epId}` },
     ],
     [
-      { text: "💡 Best Quote",   callback_data: `ep:quote:${epId}` },
-      { text: "📄 PDF Export",   callback_data: `transcript:${epId}` },
+      { text: "💡 Best Quote",      callback_data: `ep:quote:${epId}` },
+      { text: "📄 PDF Transcript",  callback_data: `transcript:${epId}` },
+    ],
+    // ── Management ────────────────────────────────────────────────────
+    [
+      { text: "📝 Add Note",        callback_data: `ep:addNote:${epId}` },
+      { text: "🏷 Tags",            callback_data: `tag_pick:${epId}` },
     ],
     [
-      backBtn(`ep:${epId}`, "◀️ Back to Episode"),
+      { text: "🔖 Bookmark",        callback_data: `ep:bookmark:${epId}` },
+      { text: "🔗 Share",           callback_data: `ep:share:${epId}` },
     ],
+    [
+      { text: "⏰ Remind Me",       callback_data: `ep:remind_menu:${epId}` },
+      { text: "⏩ Skip Episode",    callback_data: `ep:skip:${epId}` },
+    ],
+    [
+      { text: "⏱ Sleep Timer",     callback_data: `ep:sleep_menu:${epId}` },
+      { text: "📊 Analytics",       callback_data: `ep:analytics:${epId}` },
+    ],
+    // ── Back ──────────────────────────────────────────────────────────
+    [backBtn(`ep:${epId}`, "◀️ Back to Episode")],
   ];
 }
 
-// ─── Management Sub-menu ──────────────────────────────────────────────────────
-//
-// Layout:
-//   [📝 Add Note]      [🏷 Tags]
-//   [🔖 Bookmark]      [🔗 Share]
-//   [⏱ Sleep Timer]   [📊 Analytics]
-//   [⏰ Remind Me]     [⏩ Skip Episode]
-//   [◀️ Back to Episode]
-//
+// Keep these shims so old callback data still works during rollover
+export function aiMenu(epId: number, hasTranscript = false): IKB {
+  return toolsMenu(epId, hasTranscript);
+}
 
 export function manageMenu(epId: number): IKB {
-  return [
-    [
-      { text: "📝 Add Note",     callback_data: `ep:addNote:${epId}` },
-      { text: "🏷 Tags",         callback_data: `tag_pick:${epId}` },
-    ],
-    [
-      { text: "🔖 Bookmark",     callback_data: `ep:bookmark:${epId}` },
-      { text: "🔗 Share",        callback_data: `ep:share:${epId}` },
-    ],
-    [
-      { text: "⏱ Sleep Timer",  callback_data: `ep:sleep_menu:${epId}` },
-      { text: "📊 Analytics",    callback_data: `ep:analytics:${epId}` },
-    ],
-    [
-      { text: "⏰ Remind Me",    callback_data: `ep:remind_menu:${epId}` },
-      { text: "⏩ Skip Episode", callback_data: `ep:skip:${epId}` },
-    ],
-    [
-      backBtn(`ep:${epId}`, "◀️ Back to Episode"),
-    ],
-  ];
+  return toolsMenu(epId);
 }
 
 // ─── Sleep Timer Sub-menu ─────────────────────────────────────────────────────

@@ -42,7 +42,7 @@ import {
 import {
   MAIN_KEYBOARD, PANEL_BUTTONS, homeRow, HOME_BTN,
   ADMIN_KEYBOARD, ADMIN_PANEL_BUTTONS,
-  feedActions, episodeActions, aiMenu, manageMenu,
+  feedActions, episodeActions, aiMenu, manageMenu, toolsMenu,
   sleepTimerMenu, remindMenu, exportFormatKb,
   paginationRow, confirmRow, queueItemActions, settingsRows, ratingKeyboard,
   sleepTimerRow, speedRow, discoverCategoriesKb, feedNotifMenu,
@@ -395,7 +395,7 @@ export function registerHandlers(bot: TelegramBot): void {
 
   bot.onText(/^\/import/, (msg) => {
     if (!rl(msg)) return;
-    void sendMd(bot, msg.chat.id, [`📂 *استيراد OPML*`, DIV, `أرسل ملف \.opml لاستيراد اشتراكاتك\\.`].join("\n"));
+    void sendMd(bot, msg.chat.id, [`📂 *Import OPML*`, DIV, `Send your \\.opml file to import your subscriptions\\.`].join("\n"));
   });
 
   bot.onText(/^\/random/, async (msg) => {
@@ -533,10 +533,10 @@ export function registerHandlers(bot: TelegramBot): void {
   bot.onText(/^\/broadcast (.+)/, async (msg, match) => {
     if (!await isAdmin(String(msg.chat.id))) return;
     const text = match?.[1]?.trim() ?? "";
-    const loadMsg = await bot.sendMessage(msg.chat.id, "📢 جاري الإرسال...");
+    const loadMsg = await bot.sendMessage(msg.chat.id, "📢 Broadcasting…");
     const result = await broadcastMessage(bot, text, String(msg.chat.id));
     await bot.editMessageText(
-      `✅ تم الإرسال لـ ${result.sent} مستخدم\n❌ فشل: ${result.failed}`,
+      `✅ Sent to ${result.sent} users\n❌ Failed: ${result.failed}`,
       { chat_id: msg.chat.id, message_id: loadMsg.message_id }
     ).catch(() => {});
   });
@@ -587,7 +587,7 @@ export function registerHandlers(bot: TelegramBot): void {
     if (gateResult === "block") {
       const user = await db.select({ blockReason: usersTable.blockReason })
         .from(usersTable).where(eq(usersTable.chatId, String(chatId))).limit(1);
-      await bot.sendMessage(chatId, `🚷 تم حظرك. السبب: ${user[0]?.blockReason ?? "غير محدد"}`);
+      await bot.sendMessage(chatId, `🚷 You have been blocked. Reason: ${user[0]?.blockReason ?? "Not specified"}`);
       return;
     }
     if (gateResult === "pending") {
@@ -595,7 +595,7 @@ export function registerHandlers(bot: TelegramBot): void {
       const existing = await db.select().from(usersTable)
         .where(eq(usersTable.chatId, String(chatId))).limit(1);
       if (existing[0] && existing[0].captchaSolved) {
-        await bot.sendMessage(chatId, "⏳ حسابك في انتظار الموافقة من الأدمن.");
+        await bot.sendMessage(chatId, "⏳ Your account is awaiting admin approval.");
         return;
       }
       if (existing[0] && !existing[0].captchaSolved) {
@@ -747,12 +747,12 @@ async function routeCallback(
     }
     if (cmd === "search") {
       getSession(chatId).action = "awaiting_search";
-      await editMd(bot, chatId, msgId, `🔍 *بحث في الحلقات*\n${DIV}\nأرسل كلمة مفتاحية:`, { inline_keyboard: [homeRow()] });
+      await editMd(bot, chatId, msgId, `🔍 *Search Episodes*\n${DIV}\nSend a keyword to search for:`, { inline_keyboard: [homeRow()] });
       return;
     }
     if (cmd === "browse") {
       getSession(chatId).action = "awaiting_browse";
-      await editMd(bot, chatId, msgId, `🌐 *تصفح iTunes*\n${DIV}\nأدخل اسم بودكاست أو موضوع:`, { inline_keyboard: [homeRow()] });
+      await editMd(bot, chatId, msgId, `🌐 *Browse iTunes*\n${DIV}\nEnter a podcast name or topic:`, { inline_keyboard: [homeRow()] });
       return;
     }
     await cmdDispatch(bot, chatId, msgId, cmd); return;
@@ -773,9 +773,10 @@ async function routeCallback(
   }
   if (data.startsWith("eplist:"))          { const [,f,p] = data.split(":").map(Number); await showFeedEpisodes(bot, chatId, msgId, f, p); return; }
 
-  // ── Episode sub-menus ──────────────────────────────────────────────────
-  if (data.startsWith("ep:ai:"))           { await showEpAiMenu(bot, chatId, msgId, +data.slice(6)); return; }
-  if (data.startsWith("ep:manage:"))       { await showEpManageMenu(bot, chatId, msgId, +data.slice(10)); return; }
+  // ── Episode tools & sub-menus ──────────────────────────────────────────
+  if (data.startsWith("ep:tools:"))        { await showEpToolsMenu(bot, chatId, msgId, +data.slice(9)); return; }
+  if (data.startsWith("ep:ai:"))           { await showEpToolsMenu(bot, chatId, msgId, +data.slice(6)); return; }
+  if (data.startsWith("ep:manage:"))       { await showEpToolsMenu(bot, chatId, msgId, +data.slice(10)); return; }
   if (data.startsWith("ep:sleep_menu:"))   { await showEpSleepMenu(bot, chatId, msgId, +data.slice(14)); return; }
   if (data.startsWith("ep:remind_menu:"))  { await showEpRemindMenu(bot, chatId, msgId, +data.slice(15)); return; }
   if (data.startsWith("ep:bookmark:"))     { await handleEpBookmark(bot, chatId, msgId, +data.slice(12)); return; }
@@ -1841,7 +1842,7 @@ async function handleEpShare(bot: TelegramBot, chatId: number, _msgId: number, e
   });
 
   await sendMd(bot, chatId, card, {
-    reply_markup: { inline_keyboard: [[{ text: "◀️ رجوع للحلقة", callback_data: `ep:${epId}` }]] },
+    reply_markup: { inline_keyboard: [[{ text: "◀️ Back to Episode", callback_data: `ep:${epId}` }]] },
   });
 }
 
@@ -2312,12 +2313,12 @@ async function cmdAdminUsers(bot: TelegramBot, chatId: number): Promise<void> {
     .orderBy(desc(usersTable.joinedAt)).limit(20);
 
   if (!users.length) {
-    await sendMd(bot, chatId, `👥 *لا يوجد مستخدمون بعد*`);
+    await sendMd(bot, chatId, `👥 *No users yet*`);
     return;
   }
 
   const lines = [
-    `👥 *المستخدمون \\(${users.length}\\)*`,
+    `👥 *Users \\(${users.length}\\)*`,
     DIV,
   ];
   for (const u of users) {
@@ -2337,12 +2338,12 @@ async function cmdAdminLogs(bot: TelegramBot, chatId: number): Promise<void> {
     .orderBy(desc(adminLogsTable.createdAt)).limit(20);
 
   if (!logs.length) {
-    await sendMd(bot, chatId, `📋 *لا توجد سجلات بعد*`);
+    await sendMd(bot, chatId, `📋 *No activity logs yet*`);
     return;
   }
 
   const lines = [
-    `📋 *آخر ${logs.length} نشاط*`,
+    `📋 *Last ${logs.length} Activities*`,
     DIV,
   ];
   for (const l of logs) {
@@ -2364,10 +2365,10 @@ async function handleAdminApprove(
   query: TelegramBot.CallbackQuery, targetChatId: string
 ): Promise<void> {
   await approveUser(bot, targetChatId, String(chatId));
-  await bot.answerCallbackQuery(query.id, { text: `✅ تمت الموافقة` });
+  await bot.answerCallbackQuery(query.id, { text: `✅ Approved` });
   if (query.message) {
     await bot.editMessageText(
-      `✅ تمت الموافقة على \`${targetChatId}\``,
+      `✅ Approved \`${targetChatId}\``,
       { chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown" }
     ).catch(() => {});
   }
@@ -2378,10 +2379,10 @@ async function handleAdminReject(
   query: TelegramBot.CallbackQuery, targetChatId: string
 ): Promise<void> {
   await rejectUser(bot, targetChatId, String(chatId));
-  await bot.answerCallbackQuery(query.id, { text: `❌ تم الرفض` });
+  await bot.answerCallbackQuery(query.id, { text: `❌ Rejected` });
   if (query.message) {
     await bot.editMessageText(
-      `❌ تم رفض \`${targetChatId}\``,
+      `❌ Rejected \`${targetChatId}\``,
       { chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown" }
     ).catch(() => {});
   }
@@ -2391,11 +2392,11 @@ async function handleAdminBlock(
   bot: TelegramBot, chatId: number,
   query: TelegramBot.CallbackQuery, targetChatId: string
 ): Promise<void> {
-  await blockUser(bot, targetChatId, String(chatId), "تم حظرك من قبل الأدمن");
-  await bot.answerCallbackQuery(query.id, { text: `🚷 تم الحظر` });
+  await blockUser(bot, targetChatId, String(chatId), "Blocked by admin");
+  await bot.answerCallbackQuery(query.id, { text: `🚷 Blocked` });
   if (query.message) {
     await bot.editMessageText(
-      `🚷 تم حظر \`${targetChatId}\``,
+      `🚷 Blocked \`${targetChatId}\``,
       { chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown" }
     ).catch(() => {});
   }
@@ -2411,7 +2412,7 @@ async function handleEpDeepExplanation(bot: TelegramBot, chatId: number, epId: n
 
   const text = ep[0].transcript ?? ep[0].description ?? "";
   if (!text) {
-    await sendMd(bot, chatId, softError("لا يوجد محتوى للتحليل", "قم بتفريغ الحلقة أولاً\\."));
+    await sendMd(bot, chatId, softError("No content to analyse", "Transcribe the episode first for best results\\."));
     return;
   }
 
@@ -2426,10 +2427,10 @@ async function handleEpDeepExplanation(bot: TelegramBot, chatId: number, epId: n
     for (const chunk of chunks) {
       await bot.sendMessage(chatId, chunk);
     }
-    await sendMd(bot, chatId, `💡 *انتهى الشرح العميق*`, {
+    await sendMd(bot, chatId, `💡 *Deep Dive Complete*`, {
       reply_markup: { inline_keyboard: [
-        [{ text: "❓ 100 سؤال", callback_data: `ep:questions:${epId}` }],
-        [{ text: "◀️ رجوع للحلقة", callback_data: `ep:${epId}` }],
+        [{ text: "❓ 100 Questions",     callback_data: `ep:questions:${epId}` }],
+        [{ text: "◀️ Back to Episode",  callback_data: `ep:${epId}` }],
         homeRow(),
       ]},
     });
@@ -2446,7 +2447,7 @@ async function handleEpQuestions(bot: TelegramBot, chatId: number, epId: number)
 
   const text = ep[0].transcript ?? ep[0].description ?? "";
   if (!text) {
-    await sendMd(bot, chatId, softError("لا يوجد محتوى للأسئلة", "قم بتفريغ الحلقة أولاً\\."));
+    await sendMd(bot, chatId, softError("No content for questions", "Transcribe the episode first for best results\\."));
     return;
   }
 
@@ -2461,11 +2462,11 @@ async function handleEpQuestions(bot: TelegramBot, chatId: number, epId: number)
     for (const chunk of chunks) {
       await bot.sendMessage(chatId, chunk);
     }
-    await sendMd(bot, chatId, `❓ *تم توليد الأسئلة\\!*`, {
+    await sendMd(bot, chatId, `❓ *Questions Generated\\!*`, {
       reply_markup: { inline_keyboard: [
-        [{ text: "🎲 100 سؤال جديد", callback_data: `questions_new:${epId}` }],
-        [{ text: "💡 شرح عميق",      callback_data: `ep:deep:${epId}` }],
-        [{ text: "◀️ رجوع للحلقة",   callback_data: `ep:${epId}` }],
+        [{ text: "🎲 100 New Questions", callback_data: `questions_new:${epId}` }],
+        [{ text: "🎓 Deep Dive",         callback_data: `ep:deep:${epId}` }],
+        [{ text: "◀️ Back to Episode",   callback_data: `ep:${epId}` }],
         homeRow(),
       ]},
     });
@@ -2492,10 +2493,10 @@ async function handleEpQuestionsNew(bot: TelegramBot, chatId: number, epId: numb
     for (const chunk of chunks) {
       await bot.sendMessage(chatId, chunk);
     }
-    await sendMd(bot, chatId, `🎲 *تم توليد 100 سؤال جديدة\\!*`, {
+    await sendMd(bot, chatId, `🎲 *100 New Questions Generated\\!*`, {
       reply_markup: { inline_keyboard: [
-        [{ text: "🎲 100 سؤال جديد", callback_data: `questions_new:${epId}` }],
-        [{ text: "◀️ رجوع للحلقة",   callback_data: `ep:${epId}` }],
+        [{ text: "🎲 100 New Questions", callback_data: `questions_new:${epId}` }],
+        [{ text: "◀️ Back to Episode",   callback_data: `ep:${epId}` }],
         homeRow(),
       ]},
     });
@@ -2504,38 +2505,31 @@ async function handleEpQuestionsNew(bot: TelegramBot, chatId: number, epId: numb
 
 // ─── SUB-MENU HANDLERS (NEW) ──────────────────────────────────────────────────
 
-async function showEpAiMenu(bot: TelegramBot, chatId: number, msgId: number, epId: number): Promise<void> {
+async function showEpToolsMenu(bot: TelegramBot, chatId: number, msgId: number, epId: number): Promise<void> {
   const ep = await db.select({ title: episodesTable.title, transcript: episodesTable.transcript })
     .from(episodesTable).where(eq(episodesTable.id, epId)).limit(1);
   if (!ep[0]) return;
 
   const hasTranscript = Boolean(ep[0].transcript);
+  const hint = hasTranscript
+    ? `✅ _Transcript available — AI tools will be more accurate_`
+    : `💡 _Run Transcript first for better AI results_`;
+
   await editMd(bot, chatId, msgId,
     [
-      `🤖 *AI مساعد*`,
-      `════════════════════`,
-      `🎙 _${esc(trunc(ep[0].title, 34))}_`,
+      `🛠 *Episode Tools*`,
+      DIV,
+      `🎙 _${esc(trunc(ep[0].title, 36))}_`,
       DIV_SM,
-      hasTranscript ? `✅ النص المفرَّغ متاح` : `💡 يمكنك تفريغ الحلقة أولاً للحصول على نتائج أفضل`,
+      hint,
     ].join("\n"),
-    { reply_markup: { inline_keyboard: aiMenu(epId, hasTranscript) } } as any
+    { inline_keyboard: toolsMenu(epId, hasTranscript) }
   );
 }
 
-async function showEpManageMenu(bot: TelegramBot, chatId: number, msgId: number, epId: number): Promise<void> {
-  const ep = await db.select({ title: episodesTable.title }).from(episodesTable)
-    .where(eq(episodesTable.id, epId)).limit(1);
-  if (!ep[0]) return;
-
-  await editMd(bot, chatId, msgId,
-    [
-      `⚙️ *إدارة الحلقة*`,
-      `════════════════════`,
-      `🎙 _${esc(trunc(ep[0].title, 34))}_`,
-    ].join("\n"),
-    { reply_markup: { inline_keyboard: manageMenu(epId) } } as any
-  );
-}
+// Keep shim names so any stale callbacks still resolve
+const showEpAiMenu    = showEpToolsMenu;
+const showEpManageMenu = showEpToolsMenu;
 
 async function showEpSleepMenu(bot: TelegramBot, chatId: number, msgId: number, epId: number): Promise<void> {
   const ep = await db.select({ title: episodesTable.title }).from(episodesTable)
@@ -2544,11 +2538,13 @@ async function showEpSleepMenu(bot: TelegramBot, chatId: number, msgId: number, 
 
   await editMd(bot, chatId, msgId,
     [
-      `⏱ *مؤقت النوم*`,
-      `════════════════════`,
-      `اختر المدة التي تريد الاستماع فيها:`,
+      `⏱ *Sleep Timer*`,
+      DIV,
+      `🎙 _${esc(trunc(ep[0].title, 36))}_`,
+      DIV_SM,
+      `Choose how long to listen before stopping:`,
     ].join("\n"),
-    { reply_markup: { inline_keyboard: sleepTimerMenu(epId) } } as any
+    { inline_keyboard: sleepTimerMenu(epId) }
   );
 }
 
@@ -2566,46 +2562,46 @@ async function handleEpBookmark(
   if (exists[0]) {
     await db.delete(bookmarksTable)
       .where(and(eq(bookmarksTable.chatId, String(chatId)), eq(bookmarksTable.episodeId, epId)));
-    await sendMd(bot, chatId, `🔖 *إزالة الإشارة*\n${DIV}\n_تم إزالة الإشارة من "${esc(trunc(ep[0].title, 28))}"_`, {
-      reply_markup: { inline_keyboard: [[{ text: "◀️ رجوع", callback_data: `ep:manage:${epId}` }]] },
+    await sendMd(bot, chatId, `🔖 *Bookmark Removed*\n${DIV}\n_"${esc(trunc(ep[0].title, 30))}" removed from bookmarks_`, {
+      reply_markup: { inline_keyboard: [[{ text: "◀️ Back to Tools", callback_data: `ep:tools:${epId}` }]] },
     });
   } else {
     await db.insert(bookmarksTable).values({
       chatId: String(chatId), episodeId: epId,
     }).onConflictDoNothing();
-    await sendMd(bot, chatId, `🔖 *تمت الإشارة\\!*\n${DIV}\n_"${esc(trunc(ep[0].title, 28))}" في إشاراتك المرجعية_`, {
-      reply_markup: { inline_keyboard: [[{ text: "◀️ رجوع", callback_data: `ep:manage:${epId}` }]] },
+    await sendMd(bot, chatId, `🔖 *Bookmarked\\!*\n${DIV}\n_"${esc(trunc(ep[0].title, 30))}" saved to your bookmarks_`, {
+      reply_markup: { inline_keyboard: [[{ text: "◀️ Back to Tools", callback_data: `ep:tools:${epId}` }]] },
     });
   }
 }
 
 async function handleEpTranslate(bot: TelegramBot, chatId: number, epId: number): Promise<void> {
-  if (!hasGroqKey()) { await sendMd(bot, chatId, `⚠️ _GROQ_API_KEY غير مهيأ_`); return; }
+  if (!hasGroqKey()) { await sendMd(bot, chatId, `⚠️ _AI features require GROQ\\_API\\_KEY_`); return; }
 
   const ep = await db.select().from(episodesTable).where(eq(episodesTable.id, epId)).limit(1);
   if (!ep[0]) return;
 
   const content = ep[0].transcript ?? ep[0].description ?? ep[0].title;
 
-  await withSpinner(bot, chatId, "🌍 جاري الترجمة", async () => {
+  await withSpinner(bot, chatId, "🌍 Translating…", async () => {
     const { translateText } = await import("./ai.js");
     const translated = await translateText(content.slice(0, 1500));
 
     const lines = [
-      `🌍 *ترجمة الحلقة*`,
+      `🌍 *Episode Translation*`,
       DIV,
       `🎙 _${esc(trunc(ep[0].title, 30))}_`,
       DIV_SM,
       esc(trunc(translated, 800)),
     ];
     await sendMd(bot, chatId, lines.join("\n"), {
-      reply_markup: { inline_keyboard: [[{ text: "◀️ رجوع للحلقة", callback_data: `ep:${epId}` }]] },
+      reply_markup: { inline_keyboard: [[{ text: "◀️ Back to Episode", callback_data: `ep:${epId}` }]] },
     });
   });
 }
 
 async function handleEpQuote(bot: TelegramBot, chatId: number, epId: number): Promise<void> {
-  if (!hasGroqKey()) { await sendMd(bot, chatId, `⚠️ _GROQ_API_KEY غير مهيأ_`); return; }
+  if (!hasGroqKey()) { await sendMd(bot, chatId, `⚠️ _AI features require GROQ\\_API\\_KEY_`); return; }
 
   const ep = await db.select().from(episodesTable).where(eq(episodesTable.id, epId)).limit(1);
   if (!ep[0]) return;
@@ -2615,19 +2611,19 @@ async function handleEpQuote(bot: TelegramBot, chatId: number, epId: number): Pr
 
   const content = ep[0].transcript ?? ep[0].description ?? "";
   if (!content.trim()) {
-    await sendMd(bot, chatId, softError("لا يوجد محتوى", "قم بتفريغ الحلقة أولاً\\."));
+    await sendMd(bot, chatId, softError("No content available", "Transcribe the episode first for best results\\."));
     return;
   }
 
-  await withSpinner(bot, chatId, "💡 استخراج الاقتباس", async () => {
+  await withSpinner(bot, chatId, "💡 Extracting best quote…", async () => {
     const { extractBestQuote } = await import("./ai.js");
     const quote = await extractBestQuote(content.slice(0, 3000), ep[0].title);
     const card  = quoteCard(quote, ep[0].title, feed[0]?.title);
 
     await sendMd(bot, chatId, card, {
       reply_markup: { inline_keyboard: [
-        [{ text: "🔄 اقتباس آخر",   callback_data: `ep:quote:${epId}` }],
-        [{ text: "◀️ رجوع للحلقة", callback_data: `ep:${epId}` }],
+        [{ text: "🔄 Another Quote",    callback_data: `ep:quote:${epId}` }],
+        [{ text: "◀️ Back to Episode",  callback_data: `ep:${epId}` }],
       ]},
     });
   });
@@ -2651,7 +2647,7 @@ async function handleEpAnalytics(
   });
 
   await editMd(bot, chatId, msgId, card,
-    { reply_markup: { inline_keyboard: [[{ text: "◀️ رجوع", callback_data: `ep:manage:${epId}` }]] } } as any
+    { reply_markup: { inline_keyboard: [[{ text: "◀️ Back to Tools", callback_data: `ep:tools:${epId}` }]] } } as any
   );
 }
 
@@ -2662,7 +2658,7 @@ async function cmdRandom(bot: TelegramBot, chatId: number): Promise<void> {
     .where(eq(feedsTable.chatId, String(chatId)));
 
   if (!feeds.length) {
-    await sendMd(bot, chatId, softError("لا توجد بودكاستات", "أضف بودكاست أولاً بـ /add"));
+    await sendMd(bot, chatId, softError("No podcasts yet", "Add one first with /add"));
     return;
   }
 
@@ -2676,7 +2672,7 @@ async function cmdRandom(bot: TelegramBot, chatId: number): Promise<void> {
     .limit(1);
 
   if (!eps[0]) {
-    await sendMd(bot, chatId, softError("لا توجد حلقات غير مسموعة", "جرّب تحديث بودكاستاتك\\."));
+    await sendMd(bot, chatId, softError("No unplayed episodes", "Try refreshing your podcasts first\\."));
     return;
   }
 
@@ -2684,7 +2680,7 @@ async function cmdRandom(bot: TelegramBot, chatId: number): Promise<void> {
     .where(eq(feedsTable.id, eps[0].feedId)).limit(1);
 
   await sendMd(bot, chatId,
-    [`🎲 *حلقة عشوائية*`, DIV, episodeCard({ ...eps[0], feedTitle: feed[0]?.title })].join("\n"),
+    [`🎲 *Random Episode*`, DIV, episodeCard({ ...eps[0], feedTitle: feed[0]?.title })].join("\n"),
     { reply_markup: { inline_keyboard: episodeActions(eps[0].id, { isPlayed: eps[0].listened ?? false }) } }
   );
 }
@@ -2694,7 +2690,7 @@ async function cmdDigest(bot: TelegramBot, chatId: number): Promise<void> {
     .where(eq(feedsTable.chatId, String(chatId)));
 
   if (!feeds.length) {
-    await sendMd(bot, chatId, softError("لا توجد اشتراكات", "أضف بودكاست بـ /add"));
+    await sendMd(bot, chatId, softError("No subscriptions yet", "Add a podcast with /add"));
     return;
   }
 
@@ -2716,7 +2712,7 @@ async function cmdDigest(bot: TelegramBot, chatId: number): Promise<void> {
     .limit(10);
 
   if (!eps.length) {
-    await sendMd(bot, chatId, [`🌅 *الملخص الأسبوعي*`, DIV, `لا توجد حلقات جديدة هذا الأسبوع\\.`].join("\n"), {
+    await sendMd(bot, chatId, [`🌅 *Weekly Digest*`, DIV, `No new episodes this week\\.`].join("\n"), {
       reply_markup: { inline_keyboard: [homeRow()] },
     });
     return;
