@@ -2,6 +2,6 @@
 - [Transcription chunking](transcription.md) — chunked Whisper via HTTP Range requests; 23MB per chunk; retry logic; never stops mid-episode
 - [iTunes Charts API](itunes-api.md) — working endpoint format and fallback strategy for unsupported countries
 - [Railway deployment](railway-deploy.md) — Dockerfile + railway.json; PORT env required; healthcheck at /api/healthz
-- [Vaporwave UI system](vaporwave-ui.md) — formatter.ts exports V token object + LOGO/WAVE/DIV; all text British English; esc() escapes MarkdownV2 chars
+- [UI style](ui-style.md) — clean simple style (no ASCII art); bold headers + ━ dividers; British English; V.logo = "🎙 iCast"
 - [Keyboard design](keyboard-design.md) — PANEL_BUTTONS keys are English strings matching MAIN_KEYBOARD; ep:ai:/ep:manage: sub-menus; remindMenu/exportFormatKb/feedNotifMenu in keyboards.ts
-- [Admin setup](admin-setup.md) — SUPERADMIN_CHAT_ID env auto-promotes on /start (auth-flow.ts); /adminsetup <secret> uses ADMIN_SECRET env; usersTable role set to superadmin/admin
+- [Auth policy](auth-policy.md) — CAPTCHA removed; every /start auto-approves as "user"; SUPERADMIN_CHAT_ID auto-promotes to superadmin; /adminsetup uses ADMIN_SECRET env

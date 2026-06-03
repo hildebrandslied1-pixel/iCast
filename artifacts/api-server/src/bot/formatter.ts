@@ -1,29 +1,29 @@
 /**
- * formatter.ts — iCast Vaporwave British English UI
- * Aesthetic: ░▒▓ neon-wave retro-future ▓▒░
- * Language: British English throughout
+ * formatter.ts — iCast Clean English UI
+ * Language: British English
+ * Style: Clean, simple, professional — no ASCII art
  */
 
-// ─── Vaporwave Design Tokens ──────────────────────────────────────────────────
+// ─── Design Tokens ────────────────────────────────────────────────────────────
 
 export const V = {
-  logo:   `░▒▓ ｉＣＡＳＴ ▓▒░`,
-  wave:   `～～～～～～～～～～`,
+  logo:   `🎙 iCast`,
+  wave:   ``,
   line:   `━━━━━━━━━━━━━━━━━━━`,
   thin:   `─────────────────────`,
-  dbl:    `════════════════════`,
+  dbl:    `━━━━━━━━━━━━━━━━━━━`,
   spark:  `✦`,
   dot:    `▸`,
   fill:   `◆`,
   empty:  `◇`,
-  block:  `▓`,
+  block:  `█`,
   shade:  `░`,
 };
 
-export const DIV     = V.thin;
-export const DIV_SM  = `──────────────`;
-export const LOGO    = V.logo;
-export const WAVE    = V.wave;
+export const DIV    = V.line;
+export const DIV_SM = `──────────────`;
+export const LOGO   = V.logo;
+export const WAVE   = ``;
 
 // ─── MarkdownV2 Helpers ───────────────────────────────────────────────────────
 
@@ -95,18 +95,6 @@ export function softError(situation: string, action: string): string {
   return [`😕 *${esc(situation)}*`, `_${esc(action)}_`].join("\n");
 }
 
-// ─── Vaporwave header builder ─────────────────────────────────────────────────
-
-function vHeader(title: string, sub?: string): string {
-  const lines = [
-    `*${V.logo}*`,
-    V.dbl,
-    `*${esc(title)}*`,
-  ];
-  if (sub) lines.push(`_${esc(sub)}_`);
-  return lines.join("\n");
-}
-
 // ─── Welcome ──────────────────────────────────────────────────────────────────
 
 export function welcomeMsg(
@@ -114,23 +102,20 @@ export function welcomeMsg(
   resumeEp?: { title: string; progress: number } | null
 ): string {
   const lines = [
-    `*${V.logo}*`,
-    V.dbl,
+    `🎙 *iCast* — Welcome back, *${esc(name)}*\\!`,
+    DIV,
     ``,
-    `Welcome back, *${esc(name)}* ✦`,
+    `Your AI\\-powered podcast manager is ready\\.`,
     ``,
-    `_Your personal AI\\-powered podcast manager_`,
-    ``,
-    V.wave,
-    ``,
-    `${V.dot} *My Podcasts* · *Latest Episodes*`,
-    `${V.dot} *Search* · *Discover* · *Queue*`,
-    `${V.dot} *Favourites* · *Statistics* · *Settings*`,
+    `${V.dot} *My Podcasts* · Browse your subscriptions`,
+    `${V.dot} *Latest* · New episodes waiting`,
+    `${V.dot} *Search* · Find anything`,
+    `${V.dot} *Discover* · Explore new shows`,
   ];
   if (resumeEp) {
-    lines.push(``, V.thin, `▶️ *Continue Listening*`);
-    lines.push(`🎙 ${esc(trunc(resumeEp.title, 30))}`);
-    lines.push(`${bar(resumeEp.progress)} ${resumeEp.progress}%`);
+    lines.push(``, DIV, `▶️ *Continue Listening*`);
+    lines.push(`🎙 _${esc(trunc(resumeEp.title, 30))}_`);
+    lines.push(`${bar(resumeEp.progress)}  ${resumeEp.progress}%`);
   }
   return lines.join("\n");
 }
@@ -139,47 +124,46 @@ export function welcomeMsg(
 
 export function helpMsg(): string {
   return [
-    vHeader("COMMANDS", "All available commands"),
-    V.wave,
+    `🎙 *iCast — Commands*`,
+    DIV,
     ``,
     `📻 *PODCASTS*`,
-    `\`/add\`  Add RSS feed`,
-    `\`/feeds\`  My subscriptions`,
-    `\`/latest\`  Recent episodes`,
-    `\`/search\`  Search episodes`,
-    `\`/random\`  Random episode`,
-    `\`/new\`  New in last 48h`,
-    `\`/popular\`  Most played`,
-    `\`/recent\`  Recently played`,
+    `\`/add\` — Subscribe to RSS feed`,
+    `\`/feeds\` — My subscriptions`,
+    `\`/latest\` — Recent episodes`,
+    `\`/search\` — Search episodes`,
+    `\`/random\` — Random episode`,
+    `\`/new\` — Added in last 48h`,
+    `\`/popular\` — Most played`,
+    `\`/recent\` — Recently played`,
     ``,
     `🤖 *AI TOOLS*`,
-    `\`/digest\`  Weekly digest`,
-    `\`/recommend\`  AI recommendations`,
-    `\`/mentions\`  Search transcripts`,
-    `\`/compare\`  Compare episodes`,
+    `\`/digest\` — Weekly digest`,
+    `\`/recommend\` — AI recommendations`,
+    `\`/mentions\` — Search transcripts`,
+    `\`/compare\` — Compare episodes`,
     ``,
     `📊 *TRACKING*`,
-    `\`/stats\`  My statistics`,
-    `\`/streak\`  Listening streak`,
-    `\`/history\`  Listening history`,
-    `\`/goal\`  Weekly listening goal`,
-    `\`/now\`  Current episode`,
+    `\`/stats\` — My statistics`,
+    `\`/streak\` — Listening streak`,
+    `\`/history\` — Listening history`,
+    `\`/goal\` — Weekly listening goal`,
+    `\`/now\` — Current episode`,
     ``,
     `🗂 *LIBRARY*`,
-    `\`/queue\`  Playback queue`,
-    `\`/favourites\`  Saved episodes`,
-    `\`/notes\`  My notes`,
-    `\`/export\`  Export library`,
-    `\`/import\`  Import OPML`,
+    `\`/queue\` — Playback queue`,
+    `\`/favourites\` — Saved episodes`,
+    `\`/notes\` — My notes`,
+    `\`/export\` — Export library`,
+    `\`/import\` — Import OPML`,
     ``,
     `⚙️ *SETTINGS*`,
-    `\`/settings\`  Preferences`,
-    `\`/remind\`  Set a reminder`,
-    `\`/goal\`  Listening goal`,
+    `\`/settings\` — Preferences`,
+    `\`/remind\` — Set a reminder`,
     ``,
     `🛡 *ADMIN*`,
-    `\`/admin\`  Admin panel`,
-    `\`/adminsetup\`  Setup admin access`,
+    `\`/admin\` — Admin panel`,
+    `\`/adminsetup\` — Claim admin access`,
   ].join("\n");
 }
 
@@ -187,21 +171,18 @@ export function helpMsg(): string {
 
 export function aboutMsg(): string {
   return [
-    vHeader("iCAST v3.2", "AI Podcast Manager"),
-    V.wave,
+    `🎙 *iCast v3\\.2*`,
+    DIV,
     ``,
     `${V.spark} Whisper AI transcription`,
     `${V.spark} Groq LLaMA summaries`,
-    `${V.spark} Harvard\\-style deep analysis`,
-    `${V.spark} 100 critical thinking questions`,
+    `${V.spark} Deep analysis & 100 questions`,
     `${V.spark} Professional PDF transcripts`,
-    `${V.spark} Advanced access control`,
     `${V.spark} Statistics & streak tracking`,
     `${V.spark} Sleep timer & playback speed`,
     `${V.spark} Smart playlists & queue`,
     `${V.spark} Bookmarks, notes & tags`,
     ``,
-    V.thin,
     `_Powered by Groq · Whisper · LLaMA_`,
   ].join("\n");
 }
@@ -210,8 +191,8 @@ export function aboutMsg(): string {
 
 export function addPromptMsg(): string {
   return [
-    vHeader("ADD PODCAST", "Subscribe to an RSS feed"),
-    V.wave,
+    `➕ *Add Podcast*`,
+    DIV,
     ``,
     `Send an RSS feed URL:`,
     ``,
@@ -225,8 +206,8 @@ export function addPreviewMsg(feed: {
   title: string; description?: string; episodeCount?: number;
 }): string {
   return [
-    vHeader("PODCAST FOUND", "Subscribe to this podcast?"),
-    V.wave,
+    `📻 *Podcast Found*`,
+    DIV,
     ``,
     `*${esc(trunc(feed.title, 36))}*`,
     feed.description ? `_${esc(trunc(feed.description, 120))}_` : "",
@@ -238,10 +219,11 @@ export function addPreviewMsg(feed: {
 
 export function addSuccessMsg(feed: { title: string; episodeCount?: number }): string {
   return [
-    vHeader("SUBSCRIBED!", ""),
+    `✅ *Subscribed\\!*`,
+    DIV,
     ``,
     `📻 *${esc(trunc(feed.title, 36))}*`,
-    feed.episodeCount ? `🎧 ${feed.episodeCount} episodes ready to play` : "",
+    feed.episodeCount ? `🎧 ${feed.episodeCount} episodes ready` : "",
   ].filter(Boolean).join("\n");
 }
 
@@ -257,19 +239,19 @@ export function feedCard(feed: {
 }, i?: number): string {
   const num = i !== undefined ? `${i + 1}\\. ` : "";
   const lines = [`${num}📻 *${esc(trunc(feed.title, 30))}*`];
-  if (feed.author) lines.push(`${V.dot} ${esc(trunc(feed.author, 24))}`);
+  if (feed.author) lines.push(`   _${esc(trunc(feed.author, 24))}_`);
 
   const meta: string[] = [];
   if (feed.episodeCount) meta.push(`🎧 ${feed.episodeCount}`);
   if (feed.lastUpdated)  meta.push(`📅 ${fmtDate(feed.lastUpdated)}`);
-  if (meta.length)       lines.push(meta.join("  ·  "));
+  if (meta.length)       lines.push(`   ${meta.join("  ·  ")}`);
 
-  if (feed.unreadCount && feed.unreadCount > 0) lines.push(`🔵 ${feed.unreadCount} new`);
-  if (feed.rating) lines.push("⭐".repeat(feed.rating));
+  if (feed.unreadCount && feed.unreadCount > 0) lines.push(`   🔵 ${feed.unreadCount} new`);
+  if (feed.rating) lines.push(`   ${"⭐".repeat(feed.rating)}`);
   return lines.join("\n");
 }
 
-// ─── Episode card (Vaporwave) ─────────────────────────────────────────────────
+// ─── Episode card ─────────────────────────────────────────────────────────────
 
 export function episodeCard(ep: {
   title:          string;
@@ -295,23 +277,20 @@ export function episodeCard(ep: {
   const date     = ep.pubDate  ? fmtDate(ep.pubDate)  : "";
   const numStr   = ep.episodeNumber ? `EP${ep.episodeNumber} · ` : "";
 
-  const lines: string[] = [
-    `*${V.logo}*`,
-    V.dbl,
-  ];
+  const lines: string[] = [];
 
   if (ep.feedTitle) lines.push(`📻 _${esc(trunc(ep.feedTitle, 32))}_`);
-  lines.push(``, `*${esc(numStr)}${esc(trunc(ep.title, 38))}*`, ``);
+  lines.push(`*${esc(numStr)}${esc(trunc(ep.title, 40))}*`);
 
   const meta: string[] = [];
   if (dur)  meta.push(`⏱ ${esc(dur)}`);
   if (date) meta.push(`📅 ${esc(date)}`);
   if (meta.length) lines.push(meta.join("  ·  "));
 
-  lines.push(V.wave);
+  lines.push(DIV_SM);
 
   if (isPlayed) {
-    lines.push(`✅ *Completed*`);
+    lines.push(`✅ Completed`);
   } else if (pct > 0) {
     lines.push(`${bar(pct)}  *${pct}%*`);
   } else {
@@ -322,7 +301,7 @@ export function episodeCard(ep: {
   if (isNew)      badges.push("🆕 New");
   if (isFav)      badges.push("❤️ Favourite");
   if (ep.inQueue) badges.push("⏭ Queued");
-  if (badges.length) lines.push(``, badges.join("  ${V.dot}  "));
+  if (badges.length) lines.push(badges.join("  ·  "));
 
   return lines.join("\n");
 }
@@ -331,11 +310,11 @@ export function episodeCard(ep: {
 
 export function feedListMsg(feeds: any[]): string {
   if (!feeds.length) {
-    return [vHeader("MY PODCASTS", "No subscriptions yet"), ``, `Use /add or /discover to get started`].join("\n");
+    return [`📻 *My Podcasts*`, DIV, ``, `No subscriptions yet\\.`, `_Use /add or /discover to get started_`].join("\n");
   }
   return [
-    vHeader(`MY PODCASTS (${feeds.length})`, "Your subscriptions"),
-    V.wave,
+    `📻 *My Podcasts* \\(${feeds.length}\\)`,
+    DIV,
     feeds.map((f, i) => feedCard(f, i)).join(`\n${DIV_SM}\n`),
   ].join("\n");
 }
@@ -343,12 +322,10 @@ export function feedListMsg(feeds: any[]): string {
 // ─── Episode list ─────────────────────────────────────────────────────────────
 
 export function episodeListMsg(eps: any[], feedTitle?: string, page = 1, total = 1): string {
-  const header = feedTitle
-    ? vHeader(trunc(feedTitle, 26), `Episodes`)
-    : vHeader("LATEST EPISODES", "");
-  const pg = total > 1 ? `  ·  Page ${page}/${total}` : "";
-  if (!eps.length) return [header, ``, `No episodes found`].join("\n");
-  return [header + esc(pg), V.wave, eps.map((e) => episodeCard(e)).join(`\n${DIV_SM}\n`)].join("\n");
+  const title = feedTitle ? `📻 *${esc(trunc(feedTitle, 28))}*` : `🎧 *Latest Episodes*`;
+  const pg    = total > 1 ? `  ·  Page ${page}/${total}` : "";
+  if (!eps.length) return [title, DIV, ``, `No episodes found`].join("\n");
+  return [title + esc(pg), DIV, eps.map((e) => episodeCard(e)).join(`\n${DIV_SM}\n`)].join("\n");
 }
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
@@ -372,8 +349,8 @@ export function statsMsg(s: {
     ? Math.round((s.totalMinutes / s.weeklyGoal) * 100) : null;
 
   const lines = [
-    vHeader("MY STATISTICS", "Your listening overview"),
-    V.wave,
+    `📊 *Statistics*`,
+    DIV,
     ``,
     `📻  *${s.feedCount}* podcasts`,
     `✅  *${s.playedCount}* episodes completed`,
@@ -388,7 +365,7 @@ export function statsMsg(s: {
   if (goalPct !== null)            lines.push(`🎯  Weekly goal: ${bar(goalPct)} ${goalPct}%`);
 
   if (s.weeklyMins?.length === 7) {
-    lines.push(``, V.thin, weeklyBarChart(s.weeklyMins));
+    lines.push(``, DIV_SM, weeklyBarChart(s.weeklyMins));
   }
   return lines.join("\n");
 }
@@ -409,14 +386,14 @@ export function weeklyBarChart(dailyMins: number[]): string {
 
 export function queueMsg(eps: any[]): string {
   if (!eps.length) {
-    return [vHeader("QUEUE", "Empty"), ``, `Add episodes from /latest or any episode page`].join("\n");
+    return [`⏭ *Queue*`, DIV, ``, `Empty — add episodes from /latest or any episode page`].join("\n");
   }
   return [
-    vHeader(`QUEUE (${eps.length})`, "Your playback queue"),
-    V.wave,
+    `⏭ *Queue* \\(${eps.length}\\)`,
+    DIV,
     eps.map((e, i) => {
       const dur = fmtDur(e.duration);
-      return `*${i + 1}\\.* ${esc(trunc(e.title, 28))}${dur ? `  ·  ${esc(dur)}` : ""}`;
+      return `*${i + 1}\\.* ${esc(trunc(e.title, 30))}${dur ? `  ·  ${esc(dur)}` : ""}`;
     }).join("\n"),
   ].join("\n");
 }
@@ -424,13 +401,12 @@ export function queueMsg(eps: any[]): string {
 // ─── Search results ───────────────────────────────────────────────────────────
 
 export function searchResultsMsg(query: string, results: any[]): string {
-  const q = esc(trunc(query, 20));
   if (!results.length) {
-    return [vHeader("SEARCH", `"${query}"`), ``, `No results found`, `_Try a different keyword_`].join("\n");
+    return [`🔍 *Search: "${esc(trunc(query,20))}"*`, DIV, ``, `No results found`, `_Try a different keyword_`].join("\n");
   }
   return [
-    vHeader("SEARCH RESULTS", `"${query}" · ${results.length} found`),
-    V.wave,
+    `🔍 *Search Results* · ${results.length} found`,
+    DIV,
     results.slice(0, 8).map((r, i) =>
       `*${i + 1}\\.* ${esc(trunc(r.title, 28))}${r.author ? `\n   _${esc(trunc(r.author, 22))}_` : ""}`
     ).join("\n"),
@@ -441,8 +417,9 @@ export function searchResultsMsg(query: string, results: any[]): string {
 
 export function summaryMsg(title: string, summary: string): string {
   return [
-    vHeader("AI SUMMARY", trunc(title, 30)),
-    V.wave,
+    `🤖 *AI Summary*`,
+    `_${esc(trunc(title, 32))}_`,
+    DIV,
     ``,
     esc(trunc(summary, 900)),
   ].join("\n");
@@ -457,17 +434,17 @@ export function settingsMsg(prefs: {
   playbackSpeed?: string;
 }): string {
   const notifLabel =
-    prefs.notifications === "all"    ? "🔔 All notifications" :
-    prefs.notifications === "digest" ? "📋 Daily digest only" : "🔕 Silent";
+    prefs.notifications === "all"    ? "🔔 All" :
+    prefs.notifications === "digest" ? "📋 Digest only" : "🔕 Silent";
   const speed = prefs.playbackSpeed ?? "1";
   return [
-    vHeader("SETTINGS", "Your preferences"),
-    V.wave,
+    `⚙️ *Settings*`,
+    DIV,
     ``,
     `${V.dot} Auto\\-download: ${prefs.autoDownload ? "✅ On" : "❌ Off"}`,
     `${V.dot} Notifications: ${esc(notifLabel)}`,
     `${V.dot} Language: ${prefs.language === "ar" ? "🇸🇦 Arabic" : "🇬🇧 English"}`,
-    `${V.dot} Playback speed: ${esc(speed)}×`,
+    `${V.dot} Speed: ${esc(speed)}×`,
   ].join("\n");
 }
 
@@ -477,13 +454,13 @@ export function notesMsg(
   notes: Array<{ episodeTitle: string; note: string; createdAt: Date | string }>
 ): string {
   if (!notes.length) {
-    return [vHeader("MY NOTES", ""), ``, `No notes yet`, `_Tap 📝 on any episode to add one_`].join("\n");
+    return [`📝 *My Notes*`, DIV, ``, `No notes yet`, `_Tap 📝 on any episode to add one_`].join("\n");
   }
   return [
-    vHeader(`MY NOTES (${notes.length})`, "Your episode notes"),
-    V.wave,
+    `📝 *My Notes* \\(${notes.length}\\)`,
+    DIV,
     notes.map((n, i) =>
-      `*${i + 1}\\.* ${esc(trunc(n.episodeTitle, 24))}\n   _"${esc(trunc(n.note, 50))}"_`
+      `*${i + 1}\\.* ${esc(trunc(n.episodeTitle, 26))}\n   _"${esc(trunc(n.note, 60))}"_`
     ).join(`\n${DIV_SM}\n`),
   ].join("\n");
 }
@@ -492,12 +469,12 @@ export function notesMsg(
 
 export function discoverMsg(): string {
   return [
-    vHeader("DISCOVER PODCASTS", "Explore thousands of shows"),
-    V.wave,
+    `🌍 *Discover Podcasts*`,
+    DIV,
     ``,
-    `Browse by category or country`,
+    `Browse thousands of shows by category or country\\.`,
     ``,
-    `Choose a category below ${V.spark}`,
+    `Choose a category below:`,
   ].join("\n");
 }
 
@@ -505,9 +482,10 @@ export function discoverMsg(): string {
 
 export function playlistMsg(eps: any[], totalMins: number): string {
   return [
-    vHeader("SMART PLAYLIST", `~${Math.round(totalMins)}m · ${eps.length} episodes`),
-    V.wave,
-    eps.map((e, i) => `*${i + 1}\\.* ${esc(trunc(e.title, 28))}`).join("\n"),
+    `🎵 *Smart Playlist*`,
+    `_~${Math.round(totalMins)}m · ${eps.length} episodes_`,
+    DIV,
+    eps.map((e, i) => `*${i + 1}\\.* ${esc(trunc(e.title, 30))}`).join("\n"),
   ].join("\n");
 }
 
@@ -515,10 +493,10 @@ export function playlistMsg(eps: any[], totalMins: number): string {
 
 export function celebrationMsg(title: string): string {
   return [
-    vHeader("EPISODE COMPLETE!", "Well done ✦"),
-    V.wave,
+    `🎉 *Episode Complete\\!*`,
+    DIV,
     ``,
-    `🎙 _${esc(trunc(title, 34))}_`,
+    `🎙 _${esc(trunc(title, 36))}_`,
     ``,
     `_Keep learning, keep growing\\!_ 🚀`,
   ].join("\n");
@@ -529,14 +507,14 @@ export function celebrationMsg(title: string): string {
 export function adminPanelMsg(stats?: {
   totalUsers: number; pendingUsers: number; blockedUsers: number;
 }): string {
-  const lines = [vHeader("ADMIN PANEL", "System Control Centre"), V.wave, ``];
+  const lines = [`🛡 *Admin Panel*`, DIV, ``];
   if (stats) {
     lines.push(`👥 Total users: *${stats.totalUsers}*`);
-    lines.push(`⏳ Pending approval: *${stats.pendingUsers}*`);
+    lines.push(`⏳ Pending: *${stats.pendingUsers}*`);
     lines.push(`🚷 Blocked: *${stats.blockedUsers}*`);
-    lines.push(``, V.thin);
+    lines.push(``, DIV_SM);
   }
-  lines.push(`Select an action below:`);
+  lines.push(`Select an action:`);
   return lines.join("\n");
 }
 
@@ -550,16 +528,16 @@ export function shareCard(ep: {
   description?: string | null;
 }): string {
   return [
-    vHeader("RECOMMENDED EPISODE", "Shared via iCast"),
-    V.wave,
+    `🔗 *Recommended Episode*`,
+    DIV,
     ep.feedTitle ? `📻 _${esc(trunc(ep.feedTitle, 30))}_` : "",
     `*${esc(trunc(ep.title, 40))}*`,
     ep.description ? `_${esc(trunc(ep.description, 140))}_` : "",
     ``,
     [ep.duration ? `⏱ ${esc(fmtDur(ep.duration))}` : "", ep.pubDate ? `📅 ${esc(fmtDate(ep.pubDate))}` : ""].filter(Boolean).join("  ·  "),
     ``,
-    `_Discover more with iCast_`,
-  ].filter((l) => l !== undefined).join("\n");
+    `_Shared via iCast_`,
+  ].filter((l) => l !== undefined && l !== "").join("\n");
 }
 
 // ─── Daily digest ─────────────────────────────────────────────────────────────
@@ -568,11 +546,12 @@ export function digestMsg(
   episodes: Array<{ title: string; feedTitle?: string | null; duration?: string | null }>
 ): string {
   if (!episodes.length) {
-    return [vHeader("WEEKLY DIGEST", "No new episodes this week"), ``, `_Check back soon\\!_`].join("\n");
+    return [`📋 *Weekly Digest*`, DIV, ``, `No new episodes this week\\.`, `_Check back soon\\!_`].join("\n");
   }
   const lines = [
-    vHeader("WEEKLY DIGEST", `${episodes.length} new episodes waiting`),
-    V.wave,
+    `📋 *Weekly Digest*`,
+    `_${episodes.length} new episodes waiting_`,
+    DIV,
     ``,
   ];
   for (const [i, ep] of episodes.entries()) {
@@ -587,14 +566,14 @@ export function digestMsg(
 
 export function quoteCard(quote: string, episodeTitle: string, feedTitle?: string | null): string {
   return [
-    vHeader("BEST QUOTE", "Extracted by AI"),
-    V.wave,
+    `💡 *Best Quote*`,
+    DIV,
     ``,
     `❝ ${esc(trunc(quote, 300))} ❞`,
     ``,
-    V.thin,
-    `🎙 _${esc(trunc(episodeTitle, 32))}_`,
-    feedTitle ? `📻 _${esc(trunc(feedTitle, 28))}_` : "",
+    DIV_SM,
+    `🎙 _${esc(trunc(episodeTitle, 34))}_`,
+    feedTitle ? `📻 _${esc(trunc(feedTitle, 30))}_` : "",
   ].filter((l) => l !== "").join("\n");
 }
 
@@ -607,7 +586,7 @@ export function analyticsCard(ep: {
   wordCount?:    number;
   speakerCount?: number;
 }): string {
-  const lines = [vHeader("EPISODE ANALYTICS", trunc(ep.title, 28)), V.wave, ``];
+  const lines = [`📊 *Episode Analytics*`, `_${esc(trunc(ep.title, 30))}_`, DIV, ``];
   if (ep.duration)     lines.push(`${V.dot} Duration: *${esc(fmtDur(ep.duration))}*`);
   if (ep.pubDate)      lines.push(`${V.dot} Published: *${esc(fmtDate(ep.pubDate))}*`);
   if (ep.wordCount)    lines.push(`${V.dot} Est\\. words: *~${ep.wordCount.toLocaleString()}*`);
@@ -621,13 +600,13 @@ export function historyMsg(
   eps: Array<{ title: string; feedTitle?: string | null; listenedAt?: Date | string | null }>
 ): string {
   if (!eps.length) {
-    return [vHeader("LISTENING HISTORY", ""), ``, `Nothing yet — start listening\\!`].join("\n");
+    return [`📖 *Listening History*`, DIV, ``, `Nothing yet — start listening\\!`].join("\n");
   }
   return [
-    vHeader(`HISTORY (${eps.length})`, "Recently completed"),
-    V.wave,
+    `📖 *Listening History* \\(${eps.length}\\)`,
+    DIV,
     eps.map((e, i) =>
-      `*${i + 1}\\.* ${esc(trunc(e.title, 26))}\n   _${e.listenedAt ? esc(fmtDate(e.listenedAt)) : "unknown date"}_`
+      `*${i + 1}\\.* ${esc(trunc(e.title, 28))}\n   _${e.listenedAt ? esc(fmtDate(e.listenedAt)) : "Date unknown"}_`
     ).join(`\n`),
   ].join("\n");
 }
@@ -637,17 +616,17 @@ export function historyMsg(
 export function streakMsg(streak: number, totalDays: number): string {
   const fire = "🔥".repeat(Math.min(streak, 7));
   return [
-    vHeader("LISTENING STREAK", "Daily consistency"),
-    V.wave,
+    `🔥 *Listening Streak*`,
+    DIV,
     ``,
-    `${fire}`,
+    fire || "No streak yet",
     ``,
     `*${streak}\\-day* current streak`,
     `*${totalDays}* total days listened`,
     ``,
-    streak >= 7 ? `${V.spark} _Amazing consistency\\!_` :
-    streak >= 3 ? `${V.spark} _Keep it up\\!_` :
-                  `${V.spark} _Listen daily to build your streak\\!_`,
+    streak >= 7 ? `_Amazing consistency\\!_` :
+    streak >= 3 ? `_Keep it up\\!_` :
+                  `_Listen daily to build your streak\\!_`,
   ].join("\n");
 }
 
@@ -655,20 +634,21 @@ export function streakMsg(streak: number, totalDays: number): string {
 
 export function reminderMsg(episodeTitle: string, mins: number): string {
   return [
-    vHeader("REMINDER SET", ""),
+    `⏰ *Reminder Set*`,
+    DIV,
     ``,
-    `🎙 _${esc(trunc(episodeTitle, 32))}_`,
+    `🎙 _${esc(trunc(episodeTitle, 34))}_`,
     ``,
-    `${V.dot} Reminder in *${mins}* minutes`,
+    `${V.dot} I'll remind you in *${mins}* minutes`,
   ].join("\n");
 }
 
 export function reminderDueMsg(episodeTitle: string): string {
   return [
-    vHeader("REMINDER!", "Time to listen"),
-    V.wave,
+    `⏰ *Time to Listen\\!*`,
+    DIV,
     ``,
-    `🎙 *${esc(trunc(episodeTitle, 36))}*`,
+    `🎙 *${esc(trunc(episodeTitle, 38))}*`,
     ``,
     `_Your scheduled episode is ready\\!_`,
   ].join("\n");
@@ -678,10 +658,11 @@ export function reminderDueMsg(episodeTitle: string): string {
 
 export function exportReadyMsg(format: string, count: number): string {
   return [
-    vHeader("EXPORT READY", ""),
+    `📤 *Export Ready*`,
+    DIV,
     ``,
     `${V.dot} Format: *${esc(format)}*`,
-    `${V.dot} Podcasts exported: *${count}*`,
+    `${V.dot} Podcasts: *${count}*`,
   ].join("\n");
 }
 
@@ -692,13 +673,13 @@ export function mentionsMsg(
   results: Array<{ title: string; feedTitle?: string | null; snippet?: string }>
 ): string {
   if (!results.length) {
-    return [vHeader("TRANSCRIPT SEARCH", `"${keyword}"`), ``, `No mentions found in your transcripts`].join("\n");
+    return [`🔍 *Transcript Search: "${esc(keyword)}"*`, DIV, ``, `No mentions found in your transcripts`].join("\n");
   }
   return [
-    vHeader("TRANSCRIPT SEARCH", `"${keyword}" · ${results.length} matches`),
-    V.wave,
+    `🔍 *Transcript Search: "${esc(keyword)}"* · ${results.length} matches`,
+    DIV,
     results.slice(0, 6).map((r, i) =>
-      `*${i + 1}\\.* ${esc(trunc(r.title, 26))}\n   _${esc(trunc(r.snippet ?? "", 60))}_`
+      `*${i + 1}\\.* ${esc(trunc(r.title, 28))}\n   _${esc(trunc(r.snippet ?? "", 60))}_`
     ).join(`\n${DIV_SM}\n`),
   ].join("\n");
 }
@@ -708,8 +689,9 @@ export function mentionsMsg(
 export function goalMsg(goalMins: number, achievedMins: number): string {
   const pct = Math.round(Math.min((achievedMins / goalMins) * 100, 100));
   return [
-    vHeader("WEEKLY GOAL", `${achievedMins}m / ${goalMins}m`),
-    V.wave,
+    `🎯 *Weekly Goal*`,
+    `_${achievedMins}m / ${goalMins}m_`,
+    DIV,
     ``,
     `${bar(pct)}  *${pct}%*`,
     ``,
